@@ -183,7 +183,8 @@ func (c *Client) DownloadFile(ctx context.Context, fileID string) ([]byte, error
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("파일을 받지 못했습니다: %w", err)
+		// 이 주소에도 토큰이 들어 있습니다. call과 같은 이유로 가립니다.
+		return nil, fmt.Errorf("파일을 받지 못했습니다: %s", c.maskToken(err.Error()))
 	}
 	defer resp.Body.Close()
 
@@ -219,11 +220,27 @@ func (c *Client) SendMessage(ctx context.Context, msg domain.BotReply) error {
 	return c.call(ctx, "sendMessage", body, nil)
 }
 
+// maskToken은 문자열에서 봇 토큰을 지웁니다.
+//
+// 토큰이 주소 경로에 들어가는 API라, 주소를 담는 오류가 그대로 흘러
+// 나갑니다. 로그와 저장소 양쪽에 남으므로 내보내기 전에 가립니다.
+func (c *Client) maskToken(text string) string {
+	if c.token == "" {
+		return text
+	}
+	return strings.ReplaceAll(text, c.token, "<토큰 가림>")
+}
+
 func (c *Client) call(ctx context.Context, method string, body any, out any) error {
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
+
+	// long polling은 응답이 늦게 옵니다. 부르는 쪽 시간이 그보다 짧으면
+	// 봇이 매번 끊깁니다. 대기 시간보다 넉넉한 상한을 여기서 겁니다.
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
 
 	url := fmt.Sprintf("%s/bot%s/%s", c.base, c.token, method)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(encoded))
@@ -234,7 +251,10 @@ func (c *Client) call(ctx context.Context, method string, body any, out any) err
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("텔레그램 %s 호출에 실패했습니다: %w", method, err)
+		// *url.Error는 요청 주소를 그대로 담고, 그 주소에는 봇 토큰이
+		// 들어 있습니다. 가리지 않으면 폴링이 실패할 때마다 토큰 전체가
+		// 로그와 net_probes.detail에 평문으로 남습니다.
+		return fmt.Errorf("텔레그램 %s 호출에 실패했습니다: %s", method, c.maskToken(err.Error()))
 	}
 	defer resp.Body.Close()
 

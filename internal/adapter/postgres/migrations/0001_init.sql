@@ -195,4 +195,14 @@ CREATE TABLE IF NOT EXISTS query_cache (
 -- 이미 만들어진 저장소에도 붙입니다.
 ALTER TABLE query_cache ADD COLUMN IF NOT EXISTS phash TEXT NOT NULL DEFAULT '';
 
+-- 실패한 구간을 언제부터 다시 잡아도 되는지입니다.
+--
+-- 이것이 없으면 실패한 구간을 쉬지 않고 다시 잡습니다. 임대할 때마다
+-- attempts가 오르고 다섯 번을 채우면 그 ID 대역이 영영 빠집니다. 상대
+-- 사이트가 몇 시간 멈추면 백로그 전체에 구멍이 납니다.
+ALTER TABLE crawl_ranges ADD COLUMN IF NOT EXISTS ready_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+CREATE INDEX IF NOT EXISTS idx_crawl_ranges_ready
+    ON crawl_ranges (ready_at) WHERE status = 'failed';
+
 CREATE INDEX IF NOT EXISTS idx_query_cache_lru ON query_cache (last_used_at);

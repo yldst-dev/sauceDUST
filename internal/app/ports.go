@@ -40,6 +40,8 @@ type LeaseRepository interface {
 	// ReleaseRange와 ReleaseRetry는 시도 횟수를 쓰지 않고 되돌립니다.
 	// 색인이 차서 못 넣은 것은 그 구간의 잘못이 아니므로, 실패로 적어
 	// 시도 횟수를 깎으면 나중에 자리가 생겨도 다시 잡히지 않습니다.
+	// RenewRange는 아직 일하는 중이라고 알려 임대가 만료되지 않게 합니다.
+	RenewRange(ctx context.Context, r *domain.CrawlRange) error
 	ReleaseRange(ctx context.Context, r *domain.CrawlRange) error
 	ReleaseRetry(ctx context.Context, item domain.PostRetry) error
 	FinishRetry(ctx context.Context, item domain.PostRetry, status domain.RetryStatus, cause error) error
@@ -51,7 +53,7 @@ type ImageRepository interface {
 	// UpsertImages는 여러 건을 한 번의 왕복으로 저장하고 부여된 id를 순서대로 돌려줍니다.
 	// 건마다 왕복하면 128건에 128번이 되므로 적재 경로는 이쪽을 씁니다.
 	UpsertImages(ctx context.Context, imgs []*domain.Image) ([]int64, error)
-	ExistingPostIDs(ctx context.Context, site string, postIDs []int64) (map[int64]int64, error)
+	ExistingPostIDs(ctx context.Context, site string, postIDs []int64, modelIDs []string) (map[int64]int64, error)
 	ImageByID(ctx context.Context, id int64) (*domain.Image, error)
 	ImageBySource(ctx context.Context, site string, postID int64) (*domain.Image, error)
 	ImagesByIDs(ctx context.Context, ids []int64) (map[int64]domain.Image, error)

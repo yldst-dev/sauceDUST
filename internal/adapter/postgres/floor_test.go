@@ -179,6 +179,8 @@ func TestLoweringFloorRevivesTheFailedRange(t *testing.T) {
 		t.Fatalf("실패 보고 실패: %v", err)
 	}
 
+	clearCooldown(t, store)
+
 	// 하한을 올리면 안 나옵니다.
 	req.FloorID = deep.UpperID + 1
 	if _, err := store.AcquireBackfillRange(ctx, req); !errors.Is(err, domain.ErrNoWork) {
@@ -256,6 +258,8 @@ func TestStraddlingFailedRangeKeepsItsAllowedPart(t *testing.T) {
 	if err := store.FinishRange(ctx, first, domain.RangeFailed, 0, errTestFailure); err != nil {
 		t.Fatalf("실패 보고 실패: %v", err)
 	}
+
+	clearCooldown(t, store)
 
 	// 하한을 구간 한가운데로 올립니다.
 	req.FloorID = 950
@@ -339,5 +343,18 @@ func TestReleaseRetryGivesTheAttemptBack(t *testing.T) {
 		if err := store.ReleaseRetry(ctx, items[0]); err != nil {
 			t.Fatalf("반납 실패: %v", err)
 		}
+	}
+}
+
+// clearCooldown은 실패한 구간의 쉬는 시간을 지웁니다.
+//
+// 하한을 보는 시험은 하한만 봐야 합니다. 실패 뒤 쉬었다 잡는 것은
+// TestFailedRangeWaitsBeforeRetry가 따로 봅니다.
+func clearCooldown(t *testing.T, s *Store) {
+	t.Helper()
+	_, err := s.pool.Exec(context.Background(),
+		`UPDATE crawl_ranges SET ready_at = now() - interval '1 hour'`)
+	if err != nil {
+		t.Fatalf("쉬는 시간 초기화 실패: %v", err)
 	}
 }

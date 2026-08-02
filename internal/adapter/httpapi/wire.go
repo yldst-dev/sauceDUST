@@ -248,10 +248,3 @@ func newImageView(img domain.Image) ImageView {
 		HasThumb:     img.ThumbPath != "",
 	}
 }
-
-func truncateDetail(s string) string {
-	if len(s) > 160 {
-		return s[:160]
-	}
-	return s
-}

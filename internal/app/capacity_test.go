@@ -311,3 +311,33 @@ func TestFullIndexDoesNotBurnRetries(t *testing.T) {
 		t.Errorf("찬 상태인데 재시도를 %d건 처리했습니다", len(got.retryDone))
 	}
 }
+
+// -limit에 걸려 잘라 낸 구간을 완료로 적으면 안 됩니다.
+//
+// 처리하지 않은 구간이 끝난 것으로 남으면 그 ID 대역에 구멍이 나고,
+// 나중에 다시 돌려도 채워지지 않습니다.
+func TestLimitCutDoesNotMarkRangeComplete(t *testing.T) {
+	cfg := baseConfig()
+	cfg.MaxImages = 5
+
+	lease := &fakeLease{frontier: 500}
+	source := &rangeSource{latest: 499}
+	source.fakeSource.failURL = map[string]error{}
+
+	crawler, _ := newCrawler(t, cfg, source, lease)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	crawler.Run(ctx)
+
+	got := lease.snapshot()
+	for _, status := range got.finished {
+		if status == domain.RangeCompleted && crawler.Saved() >= cfg.MaxImages {
+			// 상한에 걸린 뒤 완료로 적힌 구간이 있는지 봅니다.
+			if len(got.releasedRanges) == 0 {
+				t.Error("상한에 걸렸는데 반납한 구간이 없습니다")
+			}
+			return
+		}
+	}
+}

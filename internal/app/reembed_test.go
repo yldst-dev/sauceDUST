@@ -27,7 +27,7 @@ func (s *reembedStore) UpsertImage(context.Context, *domain.Image) (int64, error
 func (s *reembedStore) UpsertImages(context.Context, []*domain.Image) ([]int64, error) {
 	return nil, errors.New("쓰지 않습니다")
 }
-func (s *reembedStore) ExistingPostIDs(context.Context, string, []int64) (map[int64]int64, error) {
+func (s *reembedStore) ExistingPostIDs(context.Context, string, []int64, []string) (map[int64]int64, error) {
 	return nil, nil
 }
 func (s *reembedStore) ImageByID(context.Context, int64) (*domain.Image, error) {

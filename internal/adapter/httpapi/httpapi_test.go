@@ -299,7 +299,7 @@ func (stubImages) UpsertImages(context.Context, []*domain.Image) ([]int64, error
 	return nil, nil
 }
 
-func (stubImages) ExistingPostIDs(context.Context, string, []int64) (map[int64]int64, error) {
+func (stubImages) ExistingPostIDs(context.Context, string, []int64, []string) (map[int64]int64, error) {
 	return nil, nil
 }
 

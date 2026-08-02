@@ -20,8 +20,22 @@ TARGETS=(
   "windows/arm64"
 )
 
+# OUT을 밖에서 넘길 수 있으므로 그대로 지우면 안 됩니다.
+# OUT=$HOME 한 번이면 홈이 날아갑니다.
+case "$OUT" in
+  ""|"/"|"$HOME"|"$HOME/")
+    echo "지울 수 없는 경로입니다: ${OUT:-비어 있음}" >&2
+    exit 1
+    ;;
+esac
+if [ -e "$OUT" ] && [ ! -f "$OUT/.saucedust-build" ]; then
+  echo "$OUT는 이 스크립트가 만든 폴더가 아닙니다. 직접 지우고 다시 부르십시오." >&2
+  exit 1
+fi
+
 rm -rf "$OUT"
 mkdir -p "$OUT"
+touch "$OUT/.saucedust-build"
 
 echo "판 $VERSION"
 echo

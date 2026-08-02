@@ -126,6 +126,11 @@ func (c *Client) verifyCollection(ctx context.Context, m domain.EmbeddingModel) 
 		return fmt.Errorf("%w: 컬렉션 %s의 차원이 %d인데 모델 %s는 %d입니다",
 			domain.ErrModelMismatch, m.Collection, vectors.Size, m.ID, m.VectorSize)
 	}
+	// 거리 함수가 다르면 오류 없이 검색 결과만 조용히 이상해집니다.
+	if want := distanceName(m.Distance); vectors.Distance != "" && vectors.Distance != want {
+		return fmt.Errorf("%w: 컬렉션 %s의 거리가 %s인데 모델 %s는 %s입니다",
+			domain.ErrModelMismatch, m.Collection, vectors.Distance, m.ID, want)
+	}
 	if vectors.OnDisk == nil || !*vectors.OnDisk {
 		return c.moveVectorsToDisk(ctx, m.Collection)
 	}

@@ -91,26 +91,44 @@ func (s *Store) UpsertImages(ctx context.Context, imgs []*domain.Image) ([]int64
 	return ids, results.Close()
 }
 
-func (s *Store) ExistingPostIDs(ctx context.Context, site string, postIDs []int64) (map[int64]int64, error) {
+// ExistingPostIDs는 이미 다 끝난 게시물만 냅니다.
+//
+// "행이 있다"와 "다 끝났다"는 다릅니다. 메타데이터를 쓴 뒤 벡터를 넣기
+// 전에 끊기면 행만 남습니다. 존재만 보고 건너뛰면 그 이미지는 벡터 없이
+// 영영 남아 검색에 안 걸립니다. 오류도 남지 않아 알아챌 수도 없습니다.
+//
+// 그래서 넘겨받은 모델 전부의 벡터가 있는 것만 끝났다고 봅니다. 모델
+// 목록이 비어 있으면 예전처럼 존재만 봅니다.
+func (s *Store) ExistingPostIDs(ctx context.Context, site string, postIDs []int64, modelIDs []string) (map[int64]int64, error) {
 	out := make(map[int64]int64, len(postIDs))
 	if len(postIDs) == 0 {
 		return out, nil
 	}
 
-	rows, err := s.pool.Query(ctx, `
-SELECT source_post_id, id FROM images
-WHERE source_site = $1 AND source_post_id = ANY($2)`, site, postIDs)
+	const q = `
+SELECT i.source_post_id, i.id
+FROM images i
+WHERE i.source_site = $1 AND i.source_post_id = ANY($2)
+  AND ($3::text[] IS NULL OR cardinality($3::text[]) = 0 OR NOT EXISTS (
+      SELECT 1 FROM unnest($3::text[]) AS want(model_id)
+      WHERE NOT EXISTS (
+          SELECT 1 FROM image_vectors v
+          WHERE v.image_id = i.id AND v.model_id = want.model_id
+      )
+  ))`
+
+	rows, err := s.pool.Query(ctx, q, site, postIDs, modelIDs)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var postID, imageID int64
-		if err := rows.Scan(&postID, &imageID); err != nil {
+		var postID, id int64
+		if err := rows.Scan(&postID, &id); err != nil {
 			return nil, err
 		}
-		out[postID] = imageID
+		out[postID] = id
 	}
 	return out, rows.Err()
 }

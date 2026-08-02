@@ -28,6 +28,7 @@ type fakeLease struct {
 	floorSeen       int64
 	retryFloorSeen  int64
 	releasedRanges  []int64
+	renewed         []int64
 	releasedRetries []int64
 	rescheduled     int
 }
@@ -93,6 +94,13 @@ func (f *fakeLease) EnqueueRetries(_ context.Context, _, _ string, ids []int64, 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.enqueued = append(f.enqueued, ids...)
+	return nil
+}
+
+func (f *fakeLease) RenewRange(_ context.Context, r *domain.CrawlRange) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.renewed = append(f.renewed, r.ID)
 	return nil
 }
 

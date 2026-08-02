@@ -108,7 +108,7 @@ func (nopImages) UpsertImages(_ context.Context, imgs []*domain.Image) ([]int64,
 	return ids, nil
 }
 
-func (nopImages) ExistingPostIDs(context.Context, string, []int64) (map[int64]int64, error) {
+func (nopImages) ExistingPostIDs(context.Context, string, []int64, []string) (map[int64]int64, error) {
 	return nil, nil
 }
 func (nopImages) ImageByID(context.Context, int64) (*domain.Image, error) { return nil, nil }

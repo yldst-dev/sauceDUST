@@ -261,6 +261,12 @@ func (c *Crawler) runBackfill(ctx context.Context) {
 func (c *Crawler) processRange(ctx context.Context, lease *domain.CrawlRange) {
 	started := time.Now()
 
+	// 처리가 임대 만료보다 오래 걸릴 수 있습니다. 기본값으로도 33분이
+	// 걸리는데 만료는 30분입니다. 살아 있는 동안 계속 알립니다.
+	ctx, stopRenew := context.WithCancel(ctx)
+	defer stopRenew()
+	go c.renewWhileWorking(ctx, lease)
+
 	posts, err := c.source.PostsInRange(ctx, lease.LowerID, lease.UpperID, c.cfg.Tags)
 	if err != nil {
 		c.finish(ctx, lease, domain.RangeFailed, 0, err)
@@ -278,6 +284,13 @@ func (c *Crawler) processRange(ctx context.Context, lease *domain.CrawlRange) {
 			return
 		}
 		c.finish(ctx, lease, domain.RangeFailed, report.Saved, err)
+		return
+	}
+
+	// MaxImages에 걸려 잘라 낸 것은 다 한 것이 아닙니다. 완료로 적으면
+	// 처리하지 않은 구간이 끝난 것으로 남아 그 대역에 구멍이 납니다.
+	if c.remaining() == 0 {
+		c.releaseRange(ctx, lease)
 		return
 	}
 
@@ -411,8 +424,22 @@ func (c *Crawler) recordThroughput(saved int, took time.Duration) {
 	if saved <= 0 || took <= 0 {
 		return
 	}
+	// 평생 누적이 아니라 최근 것만 봅니다. 그냥 더하기만 하면 처음
+	// 느렸던 구간이 영원히 평균을 눌러 자동 조절이 굳습니다.
+	// 절반씩 잊는 방식이라 최근 것이 빨리 반영됩니다.
+	if c.throughput.Load() > throughputDecayAt {
+		c.throughput.Store(c.throughput.Load() / 2)
+		c.elapsed.Store(c.elapsed.Load() / 2)
+	}
 	c.throughput.Add(uint64(saved))
-	c.elapsed.Add(uint64(took.Seconds()))
+
+	// 초 단위로 자르면 1초 미만 구간이 전부 0이 되어 분모가 안 큽니다.
+	// 여기 오기 전에 took > 0을 확인했으므로 음수가 될 수 없습니다.
+	millis := took.Milliseconds()
+	if millis < 1 {
+		millis = 1
+	}
+	c.elapsed.Add(uint64(millis))
 
 	// 상한을 채웠으면 멈춥니다. 이미 돌고 있는 묶음은 끝까지 가므로
 	// 실제 저장 수는 상한을 조금 넘을 수 있습니다.
@@ -429,11 +456,12 @@ func (c *Crawler) rangeSize() int64 {
 		return c.cfg.BaseRangeSize
 	}
 	saved := c.throughput.Load()
-	seconds := c.elapsed.Load()
-	if saved == 0 || seconds == 0 {
+	millis := c.elapsed.Load()
+	if saved == 0 || millis == 0 {
 		return c.cfg.BaseRangeSize
 	}
-	return RangeSizeFor(float64(saved)/float64(seconds), c.cfg.BaseRangeSize)
+	perSecond := float64(saved) * 1000 / float64(millis)
+	return RangeSizeFor(perSecond, c.cfg.BaseRangeSize)
 }
 
 func retryDelay(attempts int) time.Duration {
@@ -477,5 +505,37 @@ func (c *Crawler) releaseRetry(ctx context.Context, item domain.PostRetry) {
 	}
 	if err := c.lease.ReleaseRetry(ctx, item); err != nil && ctx.Err() == nil {
 		c.log.Warn("재시도 반납 실패", slog.String("error", err.Error()))
+	}
+}
+
+// throughputDecayAt은 이만큼 쌓이면 절반으로 줄여 최근 것에 무게를 줍니다.
+const throughputDecayAt = 10_000
+
+// renewLeaseEvery는 임대 갱신 주기입니다.
+// 만료가 30분이므로 그 절반보다 짧게 잡아 한 번 놓쳐도 버팁니다.
+const renewLeaseEvery = 5 * time.Minute
+
+// renewWhileWorking은 구간을 처리하는 동안 임대를 살려 둡니다.
+func (c *Crawler) renewWhileWorking(ctx context.Context, lease *domain.CrawlRange) {
+	ticker := time.NewTicker(renewLeaseEvery)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		if err := c.lease.RenewRange(ctx, lease); err != nil {
+			if errors.Is(err, domain.ErrLeaseConflict) {
+				// 이미 빼앗겼습니다. 더 알려도 소용없습니다.
+				c.log.Warn("구간 임대를 잃었습니다", slog.Int64("range", lease.ID))
+				return
+			}
+			if ctx.Err() == nil {
+				c.log.Warn("임대 갱신 실패", slog.String("error", err.Error()))
+			}
+		}
 	}
 }

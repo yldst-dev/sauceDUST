@@ -122,6 +122,10 @@ def torchscript_backend(spec: ModelSpec, device: str, use_half: bool) -> TorchEn
     from torchvision import transforms
 
     model = torch.jit.load(spec.checkpoint, map_location=torch.device(device)).eval()
+    # 입력은 TorchEncoder가 half로 바꿉니다. 모델을 그대로 두면 자료형이
+    # 어긋나 첫 요청부터 전부 터집니다.
+    if use_half:
+        model = model.half()
     pipeline = transforms.Compose([
         transforms.Resize((spec.input_size, spec.input_size)),
         transforms.ToTensor(),

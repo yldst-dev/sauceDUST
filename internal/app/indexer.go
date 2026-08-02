@@ -118,7 +118,9 @@ func (ix *Indexer) IndexBatch(ctx context.Context, posts []domain.SourcePost) (B
 		return report, nil
 	}
 
-	existing, err := ix.images.ExistingPostIDs(ctx, ix.cfg.SourceSite, ids)
+	// 벡터까지 다 있는 것만 끝난 것으로 봅니다. 행만 있고 벡터가 없는
+	// 것을 건너뛰면 그 이미지는 검색에 영영 안 걸립니다.
+	existing, err := ix.images.ExistingPostIDs(ctx, ix.cfg.SourceSite, ids, ix.modelIDs())
 	if err != nil {
 		return report, fmt.Errorf("중복 확인에 실패했습니다: %w", err)
 	}
@@ -342,4 +344,13 @@ func classify(err error) Outcome {
 		return OutcomeThrottled
 	}
 	return OutcomeError
+}
+
+// modelIDs는 지금 쓰는 모델 이름을 냅니다.
+func (ix *Indexer) modelIDs() []string {
+	out := make([]string, 0, len(ix.models))
+	for _, m := range ix.models {
+		out = append(out, m.ID)
+	}
+	return out
 }

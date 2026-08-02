@@ -34,9 +34,12 @@ type LimiterConfig struct {
 type Limiter struct {
 	cfg LimiterConfig
 
-	mu      sync.Mutex
-	limit   int
-	slots   chan struct{}
+	mu    sync.Mutex
+	limit int
+	slots chan struct{}
+	// debt는 한도를 줄일 때 쓰는 중이라 없애지 못한 자리 수입니다.
+	// 반납이 올 때마다 하나씩 갚습니다.
+	debt    int
 	window  windowStats
 	lastAdj time.Time
 	clock   Clock
@@ -93,6 +96,30 @@ func NewLimiter(cfg LimiterConfig, clock Clock) *Limiter {
 	return l
 }
 
+// giveBack은 자리를 반납합니다. 갚을 빚이 있으면 자리를 없앱니다.
+func (l *Limiter) giveBack() {
+	l.mu.Lock()
+	if l.debt > 0 {
+		l.debt--
+		l.mu.Unlock()
+		return
+	}
+	l.mu.Unlock()
+
+	select {
+	case l.slots <- struct{}{}:
+	default:
+		// 여기 오면 통이 가득 찬 것입니다. 더 넣을 자리가 없습니다.
+	}
+}
+
+// Debt는 아직 회수하지 못한 자리 수입니다. 시험에서 씁니다.
+func (l *Limiter) Debt() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.debt
+}
+
 func (l *Limiter) Limit() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -109,13 +136,7 @@ func (l *Limiter) Acquire(ctx context.Context) (release func(), err error) {
 
 	var once sync.Once
 	return func() {
-		once.Do(func() {
-			select {
-			case l.slots <- struct{}{}:
-			default:
-				// 그 사이 한도가 줄었으면 자리를 없앱니다.
-			}
-		})
+		once.Do(l.giveBack)
 	}, nil
 }
 
@@ -192,17 +213,31 @@ func (l *Limiter) setLocked(target int) {
 
 	if target > l.limit {
 		for i := l.limit; i < target; i++ {
+			// 빚부터 없앱니다. 갚기로 한 자리를 그냥 두면, 늘린 뒤에도
+			// 반납이 그 빚을 갚느라 사라져 늘린 만큼 안 늘어납니다.
+			// 아직 쓰는 중인 자리를 되돌려 받는 것이 곧 늘리는 것입니다.
+			if l.debt > 0 {
+				l.debt--
+				continue
+			}
 			select {
 			case l.slots <- struct{}{}:
 			default:
 			}
 		}
 	} else {
-		// 사용 중인 자리는 뺏지 않습니다. 반납될 때 Acquire의 release가 흡수합니다.
+		// 놀고 있는 자리부터 없앱니다. 쓰는 중이라 못 없앤 만큼은 빚으로
+		// 적어 두고, 반납될 때 그 자리를 돌려주지 않고 갚습니다.
+		//
+		// 빚 없이 두면 축소가 헛일이 됩니다. 슬롯 통 크기가 Max라
+		// 반납이 언제나 성공하고, 429로 절반으로 줄인 그 순간에도
+		// 쓰던 자리가 전부 되돌아옵니다. 429가 나는 때는 대개 자리가
+		// 전부 차 있는 때라 하필 그때 안 듣습니다.
 		for i := l.limit; i > target; i-- {
 			select {
 			case <-l.slots:
 			default:
+				l.debt++
 			}
 		}
 	}

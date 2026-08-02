@@ -70,7 +70,6 @@ type Config struct {
 	ProxyURL      string
 	AllowPrivate  bool
 	DirectOnFail  bool
-	ProbeInterval time.Duration
 
 	HeartbeatEvery time.Duration
 	NodeTimeout    time.Duration
@@ -166,7 +165,6 @@ func Load(root string) (*Config, error) {
 		ProxyURL:      r.str("SAUCEDUST_PROXY_URL", ""),
 		AllowPrivate:  r.boolVal("SAUCEDUST_ALLOW_PRIVATE_TARGETS", false),
 		DirectOnFail:  r.boolVal("SAUCEDUST_DIRECT_FALLBACK", true),
-		ProbeInterval: r.secs("SAUCEDUST_PROBE_INTERVAL_SECS", 3600*time.Second),
 
 		HeartbeatEvery: r.secs("SAUCEDUST_HEARTBEAT_SECS", 30*time.Second),
 		NodeTimeout:    r.secs("SAUCEDUST_NODE_TIMEOUT_SECS", 90*time.Second),
@@ -231,6 +229,10 @@ func (c *Config) validate() error {
 	}
 	if c.ThumbQuality < 1 || c.ThumbQuality > 100 {
 		return fmt.Errorf("THUMB_QUALITY는 1에서 100 사이여야 합니다")
+	}
+	// 0이면 NewTicker가 터집니다. NodeTimeout과만 견주면 0이 통과합니다.
+	if c.HeartbeatEvery <= 0 {
+		return fmt.Errorf("SAUCEDUST_HEARTBEAT_SECS는 0보다 커야 합니다")
 	}
 	if c.NodeTimeout <= c.HeartbeatEvery {
 		return fmt.Errorf("SAUCEDUST_NODE_TIMEOUT_SECS는 SAUCEDUST_HEARTBEAT_SECS보다 커야 합니다")

@@ -48,7 +48,11 @@ WITH candidate AS (
       -- 아래에서 둘로 쪼개므로 여기서 통째로 빼면 안 됩니다. 빼면
       -- 하한 위 몫까지 같이 사라집니다.
       AND upper_id >= $7
-      AND (status = 'failed'
+      AND (
+           -- 실패한 구간은 쉬는 시간이 지나야 다시 잡습니다. 쉬지 않고
+           -- 다시 잡으면 임대할 때마다 시도 횟수가 올라, 상대가 몇 시간
+           -- 멈춘 사이에 백로그 전체가 다섯 번을 채우고 죽습니다.
+           (status = 'failed' AND ready_at <= now())
            OR (status = 'running' AND leased_at < now() - $5::interval))
     ORDER BY attempts, id
     FOR UPDATE SKIP LOCKED
@@ -219,12 +223,21 @@ func (s *Store) FinishRange(ctx context.Context, r *domain.CrawlRange, status do
 		detail = &msg
 	}
 
+	// 실패는 시도 횟수에 따라 점점 더 오래 쉬었다가 다시 잡습니다.
+	// 상대가 멈춰 있는데 쉬지 않고 다시 잡으면 몇 초 만에 다섯 번을
+	// 채우고, 그 구간은 상대가 돌아와도 영영 빠집니다.
+	wait := time.Duration(0)
+	if status == domain.RangeFailed {
+		wait = retryBackoff(r.Attempts)
+	}
+
 	const q = `
 UPDATE crawl_ranges
-SET status = $4, saved_count = $5, last_error = $6, finished_at = now(), node_id = NULL
+SET status = $4, saved_count = $5, last_error = $6, finished_at = now(), node_id = NULL,
+    ready_at = now() + $7::interval
 WHERE id = $1 AND attempts = $2 AND node_id = $3 AND status = 'running'`
 
-	tag, err := s.pool.Exec(ctx, q, r.ID, r.Attempts, r.NodeID, string(status), saved, detail)
+	tag, err := s.pool.Exec(ctx, q, r.ID, r.Attempts, r.NodeID, string(status), saved, detail, wait)
 	if err != nil {
 		return fmt.Errorf("구간 완료 처리에 실패했습니다: %w", err)
 	}
@@ -331,6 +344,46 @@ RETURNING r.id, r.source_post_id, r.attempts`
 	return out, rows.Err()
 }
 
+// retryBackoff는 몇 번째 실패인지에 따라 얼마나 쉴지 정합니다.
+// 1분에서 시작해 두 배씩 늘리고 30분에서 멈춥니다.
+func retryBackoff(attempts int) time.Duration {
+	if attempts < 1 {
+		attempts = 1
+	}
+	if attempts > 6 {
+		attempts = 6
+	}
+	wait := time.Duration(1<<(attempts-1)) * time.Minute
+	if wait > 30*time.Minute {
+		wait = 30 * time.Minute
+	}
+	return wait
+}
+
+// RenewRange는 아직 일하고 있다고 알립니다.
+//
+// 이것이 없으면 살아 있는 노드의 구간을 다른 노드가 빼앗습니다. 기본값인
+// 구간 10,000개를 초당 5회로 받으면 33분이 걸리는데 임대 만료는 30분이라,
+// 정상 처리만으로도 만료를 넘깁니다. 빼앗기면 같은 구간을 둘이 받아 상대
+// 사이트의 속도 한도를 두 배로 쓰고, 느린 노드는 실패한 적도 없이
+// 시도 횟수를 채워 그 대역이 영영 빠집니다.
+//
+// 펜싱 토큰을 함께 봅니다. 이미 회수된 뒤라면 갱신하지 않습니다.
+func (s *Store) RenewRange(ctx context.Context, r *domain.CrawlRange) error {
+	const q = `
+UPDATE crawl_ranges SET leased_at = now()
+WHERE id = $1 AND attempts = $2 AND node_id = $3 AND status = 'running'`
+
+	tag, err := s.pool.Exec(ctx, q, r.ID, r.Attempts, r.NodeID)
+	if err != nil {
+		return fmt.Errorf("임대 갱신에 실패했습니다: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: 구간 %d는 이미 회수되었습니다", domain.ErrLeaseConflict, r.ID)
+	}
+	return nil
+}
+
 // ReleaseRange는 임대를 되돌립니다. 시도 횟수도 함께 돌려놓습니다.
 //
 // 색인이 차서 못 넣은 것은 그 구간의 잘못이 아닙니다. 실패로 적으면
@@ -340,7 +393,7 @@ func (s *Store) ReleaseRange(ctx context.Context, r *domain.CrawlRange) error {
 	const q = `
 UPDATE crawl_ranges
 SET status = 'failed', attempts = GREATEST(attempts - 1, 0), node_id = NULL,
-    last_error = NULL, finished_at = NULL
+    last_error = NULL, finished_at = NULL, ready_at = now()
 WHERE id = $1 AND attempts = $2 AND node_id = $3 AND status = 'running'`
 
 	tag, err := s.pool.Exec(ctx, q, r.ID, r.Attempts, r.NodeID)
@@ -359,9 +412,11 @@ func (s *Store) ReleaseRetry(ctx context.Context, item domain.PostRetry) error {
 UPDATE crawl_post_retries
 SET status = 'pending', attempts = GREATEST(attempts - 1, 0), node_id = NULL,
     ready_at = now()
-WHERE id = $1 AND status = 'running'`
+WHERE id = $1 AND attempts = $2 AND status = 'running'`
 
-	if _, err := s.pool.Exec(ctx, q, item.ID); err != nil {
+	// 펜싱 토큰을 함께 봅니다. 없으면 이미 다른 노드가 가져간 항목을
+	// 되돌려 그쪽 임대를 무효로 만듭니다.
+	if _, err := s.pool.Exec(ctx, q, item.ID, item.Attempts); err != nil {
 		return fmt.Errorf("재시도 반납에 실패했습니다: %w", err)
 	}
 	return nil
@@ -382,7 +437,12 @@ UPDATE crawl_post_retries
 SET status = $3, last_error = $4, node_id = NULL
 WHERE id = $1 AND attempts = $2 AND status = 'running'`
 
-	_, err := s.pool.Exec(ctx, q, item.ID, item.Attempts, string(status), detail)
+	tag, err := s.pool.Exec(ctx, q, item.ID, item.Attempts, string(status), detail)
+	if err == nil && tag.RowsAffected() == 0 {
+		// 이미 다른 노드가 가져갔습니다. 조용히 지나가면 그 노드의
+		// 결과를 이쪽 결과로 덮어씁니다.
+		return fmt.Errorf("%w: 재시도 %d는 이미 회수되었습니다", domain.ErrLeaseConflict, item.ID)
+	}
 	return err
 }
 

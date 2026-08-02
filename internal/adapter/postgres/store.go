@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -23,6 +24,14 @@ const maxPoolConns = 500
 
 type Store struct {
 	pool *pgxpool.Pool
+
+	// vectorCount는 모델별 벡터 수를 잠깐 기억해 둡니다.
+	// 세려면 2,000만 행을 훑어야 하는데 대시보드가 몇 초마다 부릅니다.
+	vectorCount struct {
+		mu      sync.Mutex
+		byModel map[string]int64
+		at      time.Time
+	}
 }
 
 type Options struct {

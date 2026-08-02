@@ -33,6 +33,10 @@ const maxUploadBytes = 32 << 20
 // 건 규모이므로 넉넉하게 잡아도 충분합니다.
 const maxIngestItems = 2048
 
+// maxRequestBytes는 검색 요청 본문 전체의 상한입니다.
+// 업로드 한 장에 32MB를 주고 멀티파트 껍데기 몫을 조금 더합니다.
+const maxRequestBytes = maxUploadBytes + (1 << 20)
+
 type StatsSource interface {
 	Ping(ctx context.Context) error
 	CountImages(ctx context.Context) (int64, error)
@@ -268,6 +272,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 본문 전체에 상한을 겁니다. ParseMultipartForm은 메모리 몫을 넘는
+	// 만큼을 디스크로 흘리므로, 상한이 없으면 요청 하나로 디스크를
+	// 채울 수 있습니다.
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBytes)
+
 	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("업로드를 읽지 못했습니다: %w", err))
 		return
@@ -341,7 +350,12 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 			defer wg.Done()
 			status := "ok"
 			if err := p.fn(ctx); err != nil {
-				status = truncateDetail(err.Error())
+				// 인증 없이 볼 수 있는 곳이라 원문을 그대로 내보내면
+				// 안 됩니다. 접속 문자열에 내부 호스트와 계정 이름이
+				// 들어 있습니다. 살았는지 여부만 알립니다.
+				status = "죽음"
+				s.deps.Log.Warn("준비 상태 확인 실패",
+					slog.String("part", p.name), slog.String("error", err.Error()))
 			}
 			mu.Lock()
 			defer mu.Unlock()

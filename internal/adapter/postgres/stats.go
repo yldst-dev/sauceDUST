@@ -104,6 +104,15 @@ FROM crawl_states WHERE source_site = $1 AND scope_key = $2`, site, scope).Scan(
 		out.BackfillBefore = *before
 	}
 
+	// 모델별 벡터 수는 2,000만 행을 훑어야 나옵니다. 대시보드가 몇 초마다
+	// 부르는 값이라 그때마다 세면 그것만으로 디스크가 바쁩니다. 잠깐
+	// 기억해 두고 씁니다. 어림치를 쓰지 않는 이유는 방금 넣은 자료가
+	// 통계에 안 잡혀 0으로 보이기 때문입니다.
+	if cached, ok := s.cachedVectorCounts(); ok {
+		out.VectorsByModel = cached
+		return out, nil
+	}
+
 	rows, err := s.pool.Query(ctx, `
 SELECT model_id, count(*) FROM image_vectors GROUP BY model_id`)
 	if err != nil {
@@ -121,7 +130,42 @@ SELECT model_id, count(*) FROM image_vectors GROUP BY model_id`)
 		}
 		out.VectorsByModel[modelID] = count
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	s.rememberVectorCounts(out.VectorsByModel)
+	return out, nil
+}
+
+// vectorCountTTL은 모델별 벡터 수를 기억해 두는 시간입니다.
+//
+// 대시보드가 몇 초마다 부르는데 셀 때마다 2,000만 행을 훑습니다. 몇 초
+// 늦은 값을 보여 주는 것이 그때마다 디스크를 훑는 것보다 낫습니다.
+const vectorCountTTL = 15 * time.Second
+
+func (s *Store) cachedVectorCounts() (map[string]int64, bool) {
+	s.vectorCount.mu.Lock()
+	defer s.vectorCount.mu.Unlock()
+
+	if s.vectorCount.at.IsZero() || time.Since(s.vectorCount.at) > vectorCountTTL {
+		return nil, false
+	}
+	out := make(map[string]int64, len(s.vectorCount.byModel))
+	for k, v := range s.vectorCount.byModel {
+		out[k] = v
+	}
+	return out, true
+}
+
+func (s *Store) rememberVectorCounts(counts map[string]int64) {
+	s.vectorCount.mu.Lock()
+	defer s.vectorCount.mu.Unlock()
+
+	s.vectorCount.byModel = make(map[string]int64, len(counts))
+	for k, v := range counts {
+		s.vectorCount.byModel[k] = v
+	}
+	s.vectorCount.at = time.Now()
 }
 
 // BestPaths는 이 노드에서 호스트별로 통했던 가장 빠른 경로를 돌려줍니다.

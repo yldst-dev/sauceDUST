@@ -148,7 +148,7 @@ func (f *fakeImages) UpsertImages(_ context.Context, imgs []*domain.Image) ([]in
 	return ids, nil
 }
 
-func (f *fakeImages) ExistingPostIDs(_ context.Context, _ string, ids []int64) (map[int64]int64, error) {
+func (f *fakeImages) ExistingPostIDs(_ context.Context, _ string, ids []int64, _ []string) (map[int64]int64, error) {
 	out := map[int64]int64{}
 	for _, id := range ids {
 		if imageID, ok := f.existing[id]; ok {

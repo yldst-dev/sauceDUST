@@ -84,7 +84,7 @@ func (in *Ingest) Submit(ctx context.Context, batch []domain.IndexedImage) error
 	if len(batch) == 0 {
 		return nil
 	}
-	if err := in.checkRoom(ctx); err != nil {
+	if err := in.checkRoom(ctx, len(batch)); err != nil {
 		return err
 	}
 	for i := range batch {

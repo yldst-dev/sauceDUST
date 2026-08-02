@@ -158,8 +158,7 @@ func TestFloorAlsoBlocksFailedRanges(t *testing.T) {
 	}
 }
 
-// 하한을 다시 낮추면 남겨 둔 실패 구간이 온전히 되살아나야 합니다.
-// 걸치는 구간을 잘라 쓰지 않고 통째로 남기는 이유가 이것입니다.
+// 하한을 다시 낮추면 남겨 둔 몫이 되살아나야 합니다.
 func TestLoweringFloorRevivesTheFailedRange(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
@@ -229,3 +228,116 @@ func TestRetryQueueRespectsTheFloor(t *testing.T) {
 }
 
 var errTestFailure = errors.New("시험용 실패")
+
+// 하한을 가로지르는 실패 구간의 위쪽 몫은 잃으면 안 됩니다.
+//
+// 901~1000이 실패해 있는데 하한을 950으로 올린 상황입니다. 통째로 빼면
+// 950~1000까지 사라지고, backfill_before_id가 이미 901이라 새로 자를
+// 수도 없어 그 몫이 영영 안 모입니다.
+func TestStraddlingFailedRangeKeepsItsAllowedPart(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+
+	if err := store.InitCatchupState(ctx, "danbooru", "default", 1_001); err != nil {
+		t.Fatalf("상태 초기화 실패: %v", err)
+	}
+	registerNode(t, store, "alpha")
+
+	req := domain.LeaseRequest{
+		SourceSite: "danbooru", ScopeKey: "default", NodeID: "alpha", RangeSize: 100,
+	}
+	first, err := store.AcquireBackfillRange(ctx, req)
+	if err != nil {
+		t.Fatalf("임대 실패: %v", err)
+	}
+	if first.LowerID != 901 || first.UpperID != 1000 {
+		t.Fatalf("준비가 잘못됐습니다. 구간이 %d~%d입니다", first.LowerID, first.UpperID)
+	}
+	if err := store.FinishRange(ctx, first, domain.RangeFailed, 0, errTestFailure); err != nil {
+		t.Fatalf("실패 보고 실패: %v", err)
+	}
+
+	// 하한을 구간 한가운데로 올립니다.
+	req.FloorID = 950
+	got, err := store.AcquireBackfillRange(ctx, req)
+	if err != nil {
+		t.Fatalf("하한 위 몫을 주지 않습니다: %v", err)
+	}
+	if got.LowerID != 950 || got.UpperID != 1000 {
+		t.Fatalf("구간이 %d~%d입니다. 950~1000을 기대했습니다", got.LowerID, got.UpperID)
+	}
+	if err := store.FinishRange(ctx, got, domain.RangeCompleted, 0, nil); err != nil {
+		t.Fatalf("완료 보고 실패: %v", err)
+	}
+
+	// 하한 아래 몫은 남아 있다가 하한을 낮추면 나와야 합니다.
+	req.FloorID = 0
+	rest, err := store.AcquireBackfillRange(ctx, req)
+	if err != nil {
+		t.Fatalf("하한을 낮췄는데 남은 몫을 주지 않습니다: %v", err)
+	}
+	if rest.LowerID != 901 || rest.UpperID != 949 {
+		t.Errorf("남은 몫이 %d~%d입니다. 901~949를 기대했습니다", rest.LowerID, rest.UpperID)
+	}
+}
+
+// 시도 횟수를 쓰지 않고 되돌릴 수 있어야 합니다.
+//
+// 색인이 차서 못 넣은 것은 그 구간의 잘못이 아닙니다. 실패로 적으면
+// 다섯 번 만에 죽어서 자리가 생겨도 다시 잡히지 않습니다.
+func TestReleaseGivesTheAttemptBack(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+
+	if err := store.InitCatchupState(ctx, "danbooru", "default", 1_001); err != nil {
+		t.Fatalf("상태 초기화 실패: %v", err)
+	}
+	registerNode(t, store, "alpha")
+
+	req := domain.LeaseRequest{
+		SourceSite: "danbooru", ScopeKey: "default", NodeID: "alpha", RangeSize: 100,
+	}
+
+	// 다섯 번을 채우면 죽습니다. 여섯 번 반납해도 계속 나와야 합니다.
+	var last *domain.CrawlRange
+	for i := 0; i < 6; i++ {
+		r, err := store.AcquireBackfillRange(ctx, req)
+		if err != nil {
+			t.Fatalf("%d번째 임대에서 막혔습니다: %v", i+1, err)
+		}
+		if last != nil && r.ID != last.ID {
+			t.Fatalf("%d번째에 다른 구간이 나왔습니다", i+1)
+		}
+		if r.Attempts > 1 {
+			t.Errorf("%d번째 시도 횟수가 %d입니다. 반납했으면 1이어야 합니다", i+1, r.Attempts)
+		}
+		if err := store.ReleaseRange(ctx, r); err != nil {
+			t.Fatalf("반납 실패: %v", err)
+		}
+		last = r
+	}
+}
+
+// 재시도도 마찬가지입니다.
+func TestReleaseRetryGivesTheAttemptBack(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+
+	registerNode(t, store, "alpha")
+	if err := store.EnqueueRetries(ctx, "danbooru", "default", []int64{42}, 0); err != nil {
+		t.Fatalf("재시도 등록 실패: %v", err)
+	}
+
+	for i := 0; i < 6; i++ {
+		items, err := store.LeaseRetries(ctx, "danbooru", "default", "alpha", 10, 0)
+		if err != nil {
+			t.Fatalf("재시도 임대 실패: %v", err)
+		}
+		if len(items) != 1 {
+			t.Fatalf("%d번째에 %d건이 나왔습니다. 반납했으면 계속 나와야 합니다", i+1, len(items))
+		}
+		if err := store.ReleaseRetry(ctx, items[0]); err != nil {
+			t.Fatalf("반납 실패: %v", err)
+		}
+	}
+}

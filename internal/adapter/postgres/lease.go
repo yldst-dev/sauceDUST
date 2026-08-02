@@ -44,10 +44,10 @@ WITH candidate AS (
       AND scope_key = $2
       AND direction = $3
       AND attempts < $6
-      -- 하한 아래로 걸치는 구간은 건드리지 않습니다. 잘라서 쓰면 잘라
-      -- 낸 쪽이 완료로 표시되어, 나중에 하한을 낮춰도 영영 안 모입니다.
-      -- 그대로 두면 하한을 낮췄을 때 온전한 채로 다시 잡힙니다.
-      AND lower_id >= $7
+      -- 하한 위쪽이 조금이라도 남아 있으면 다시 씁니다. 걸치는 구간은
+      -- 아래에서 둘로 쪼개므로 여기서 통째로 빼면 안 됩니다. 빼면
+      -- 하한 위 몫까지 같이 사라집니다.
+      AND upper_id >= $7
       AND (status = 'failed'
            OR (status = 'running' AND leased_at < now() - $5::interval))
     ORDER BY attempts, id
@@ -75,11 +75,64 @@ RETURNING r.id, r.lower_id, r.upper_id, r.attempts`
 		return nil, fmt.Errorf("구간 재사용에 실패했습니다: %w", err)
 	}
 
+	if out.LowerID < req.FloorID {
+		if err := s.splitAtFloor(ctx, &out, req); err != nil {
+			return nil, err
+		}
+	}
+
 	out.SourceSite = req.SourceSite
 	out.ScopeKey = req.ScopeKey
 	out.Direction = domain.DirectionBackfill
 	out.NodeID = req.NodeID
 	return &out, nil
+}
+
+// splitAtFloor는 하한을 가로지르는 구간을 둘로 나눕니다.
+//
+// 실패한 구간 901~1000이 있는데 하한을 950으로 올린 상황입니다. 통째로
+// 빼면 950~1000까지 같이 사라집니다. backfill_before_id는 이미 901이라
+// 새로 자를 수도 없어 그 몫이 영영 안 모입니다.
+//
+// 그래서 지금 임대하는 쪽은 하한 위로 줄이고, 하한 아래 몫은 따로 남겨
+// 둡니다. 남긴 것은 나중에 하한을 낮추면 다시 잡힙니다.
+//
+// 부르는 쪽이 이미 그 행을 running으로 잡아 두었으므로, 여기서 두 갈래를
+// 한 트랜잭션으로 처리해 중간에 끊겨도 반쪽만 남지 않게 합니다.
+func (s *Store) splitAtFloor(ctx context.Context, r *domain.CrawlRange, req domain.LeaseRequest) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("구간을 나누지 못했습니다: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	below := req.FloorID - 1
+	const keep = `
+INSERT INTO crawl_ranges (source_site, scope_key, direction, lower_id, upper_id,
+                          status, attempts, node_id, leased_at)
+VALUES ($1, $2, $3, $4, $5, 'failed', 0, NULL, NULL)
+ON CONFLICT (source_site, scope_key, direction, lower_id, upper_id) DO NOTHING`
+	if _, err := tx.Exec(ctx, keep, req.SourceSite, req.ScopeKey,
+		string(domain.DirectionBackfill), r.LowerID, below); err != nil {
+		return fmt.Errorf("하한 아래 몫을 남기지 못했습니다: %w", err)
+	}
+
+	const shrink = `
+UPDATE crawl_ranges SET lower_id = $2
+WHERE id = $1 AND status = 'running'`
+	tag, err := tx.Exec(ctx, shrink, r.ID, req.FloorID)
+	if err != nil {
+		return fmt.Errorf("구간을 줄이지 못했습니다: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: 구간 %d는 이미 회수되었습니다", domain.ErrLeaseConflict, r.ID)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("구간 나누기를 마치지 못했습니다: %w", err)
+	}
+	r.LowerID = req.FloorID
+	return nil
 }
 
 func (s *Store) carveRange(ctx context.Context, req domain.LeaseRequest) (*domain.CrawlRange, error) {
@@ -276,6 +329,42 @@ RETURNING r.id, r.source_post_id, r.attempts`
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+// ReleaseRange는 임대를 되돌립니다. 시도 횟수도 함께 돌려놓습니다.
+//
+// 색인이 차서 못 넣은 것은 그 구간의 잘못이 아닙니다. 실패로 적으면
+// 시도 횟수를 깎아 먹고, 다섯 번을 채우면 나중에 자리가 생겨도 다시
+// 잡히지 않아 그 구간이 영영 빠집니다.
+func (s *Store) ReleaseRange(ctx context.Context, r *domain.CrawlRange) error {
+	const q = `
+UPDATE crawl_ranges
+SET status = 'failed', attempts = GREATEST(attempts - 1, 0), node_id = NULL,
+    last_error = NULL, finished_at = NULL
+WHERE id = $1 AND attempts = $2 AND node_id = $3 AND status = 'running'`
+
+	tag, err := s.pool.Exec(ctx, q, r.ID, r.Attempts, r.NodeID)
+	if err != nil {
+		return fmt.Errorf("구간 반납에 실패했습니다: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: 구간 %d는 이미 회수되었습니다", domain.ErrLeaseConflict, r.ID)
+	}
+	return nil
+}
+
+// ReleaseRetry는 재시도 항목을 시도 횟수를 쓰지 않고 되돌립니다.
+func (s *Store) ReleaseRetry(ctx context.Context, item domain.PostRetry) error {
+	const q = `
+UPDATE crawl_post_retries
+SET status = 'pending', attempts = GREATEST(attempts - 1, 0), node_id = NULL,
+    ready_at = now()
+WHERE id = $1 AND status = 'running'`
+
+	if _, err := s.pool.Exec(ctx, q, item.ID); err != nil {
+		return fmt.Errorf("재시도 반납에 실패했습니다: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) FinishRetry(ctx context.Context, item domain.PostRetry, status domain.RetryStatus, cause error) error {

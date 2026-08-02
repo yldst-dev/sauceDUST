@@ -273,6 +273,10 @@ func (c *Crawler) processRange(ctx context.Context, lease *domain.CrawlRange) {
 
 	report, err := c.index(ctx, posts)
 	if err != nil {
+		if errors.Is(err, domain.ErrIndexFull) {
+			c.releaseRange(ctx, lease)
+			return
+		}
 		c.finish(ctx, lease, domain.RangeFailed, report.Saved, err)
 		return
 	}
@@ -312,6 +316,13 @@ func (c *Crawler) runRetry(ctx context.Context) {
 		case <-ticker.C:
 		}
 
+		// 찬 상태에서 재시도를 계속 꺼내면 임대할 때마다 시도 횟수가
+		// 올라가고, 다섯 번을 채운 게시물은 나중에 자리가 생겨도
+		// 다시 잡히지 않습니다.
+		if c.atCapacity(ctx) {
+			continue
+		}
+
 		items, err := c.lease.LeaseRetries(ctx, c.cfg.SourceSite, c.cfg.ScopeKey, c.cfg.NodeID,
 			c.cfg.RetryBatch, c.cfg.BackfillFloor)
 		if err != nil {
@@ -335,6 +346,10 @@ func (c *Crawler) retryOne(ctx context.Context, item domain.PostRetry) {
 
 	report, err := c.index(ctx, []domain.SourcePost{*post})
 	switch {
+	case errors.Is(err, domain.ErrIndexFull):
+		// 색인이 찬 것은 이 게시물의 잘못이 아닙니다. 시도 횟수를
+		// 쓰지 않고 돌려놓아야 자리가 생겼을 때 다시 잡힙니다.
+		c.releaseRetry(ctx, item)
 	case err != nil:
 		c.reschedule(ctx, item, err)
 	case len(report.Failed) > 0:
@@ -439,5 +454,28 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 		return false
 	case <-timer.C:
 		return true
+	}
+}
+
+// releaseRange는 색인이 차서 못 넣은 구간을 시도 횟수 없이 돌려놓습니다.
+func (c *Crawler) releaseRange(ctx context.Context, lease *domain.CrawlRange) {
+	if ctx.Err() != nil {
+		return
+	}
+	if err := c.lease.ReleaseRange(ctx, lease); err != nil && ctx.Err() == nil {
+		if errors.Is(err, domain.ErrLeaseConflict) {
+			return
+		}
+		c.log.Warn("구간 반납 실패", slog.String("error", err.Error()))
+	}
+}
+
+// releaseRetry는 색인이 차서 못 넣은 재시도를 시도 횟수 없이 돌려놓습니다.
+func (c *Crawler) releaseRetry(ctx context.Context, item domain.PostRetry) {
+	if ctx.Err() != nil {
+		return
+	}
+	if err := c.lease.ReleaseRetry(ctx, item); err != nil && ctx.Err() == nil {
+		c.log.Warn("재시도 반납 실패", slog.String("error", err.Error()))
 	}
 }

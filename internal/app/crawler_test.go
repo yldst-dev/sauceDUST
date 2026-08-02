@@ -14,20 +14,22 @@ import (
 type fakeLease struct {
 	mu sync.Mutex
 
-	watermark      int64
-	frontier       int64
-	rangeSize      int64
-	handedOut      []domain.CrawlRange
-	finished       []domain.RangeStatus
-	enqueued       []int64
-	advanced       []int64
-	exhausted      bool
-	nextID         int64
-	retryQueue     []domain.PostRetry
-	retryDone      []domain.RetryStatus
-	floorSeen      int64
-	retryFloorSeen int64
-	rescheduled    int
+	watermark       int64
+	frontier        int64
+	rangeSize       int64
+	handedOut       []domain.CrawlRange
+	finished        []domain.RangeStatus
+	enqueued        []int64
+	advanced        []int64
+	exhausted       bool
+	nextID          int64
+	retryQueue      []domain.PostRetry
+	retryDone       []domain.RetryStatus
+	floorSeen       int64
+	retryFloorSeen  int64
+	releasedRanges  []int64
+	releasedRetries []int64
+	rescheduled     int
 }
 
 func (f *fakeLease) AcquireBackfillRange(_ context.Context, req domain.LeaseRequest) (*domain.CrawlRange, error) {
@@ -94,6 +96,20 @@ func (f *fakeLease) EnqueueRetries(_ context.Context, _, _ string, ids []int64, 
 	return nil
 }
 
+func (f *fakeLease) ReleaseRange(_ context.Context, r *domain.CrawlRange) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.releasedRanges = append(f.releasedRanges, r.ID)
+	return nil
+}
+
+func (f *fakeLease) ReleaseRetry(_ context.Context, item domain.PostRetry) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.releasedRetries = append(f.releasedRetries, item.ID)
+	return nil
+}
+
 func (f *fakeLease) LeaseRetries(_ context.Context, _, _, _ string, _ int, floor int64) ([]domain.PostRetry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -122,14 +138,16 @@ func (f *fakeLease) snapshot() fakeLease {
 	defer f.mu.Unlock()
 	return fakeLease{
 		watermark: f.watermark, frontier: f.frontier, rangeSize: f.rangeSize,
-		floorSeen:      f.floorSeen,
-		retryFloorSeen: f.retryFloorSeen,
-		handedOut:      append([]domain.CrawlRange(nil), f.handedOut...),
-		finished:       append([]domain.RangeStatus(nil), f.finished...),
-		enqueued:       append([]int64(nil), f.enqueued...),
-		advanced:       append([]int64(nil), f.advanced...),
-		retryDone:      append([]domain.RetryStatus(nil), f.retryDone...),
-		rescheduled:    f.rescheduled,
+		floorSeen:       f.floorSeen,
+		retryFloorSeen:  f.retryFloorSeen,
+		releasedRanges:  append([]int64(nil), f.releasedRanges...),
+		releasedRetries: append([]int64(nil), f.releasedRetries...),
+		handedOut:       append([]domain.CrawlRange(nil), f.handedOut...),
+		finished:        append([]domain.RangeStatus(nil), f.finished...),
+		enqueued:        append([]int64(nil), f.enqueued...),
+		advanced:        append([]int64(nil), f.advanced...),
+		retryDone:       append([]domain.RetryStatus(nil), f.retryDone...),
+		rescheduled:     f.rescheduled,
 	}
 }
 

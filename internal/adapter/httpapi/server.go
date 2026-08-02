@@ -26,6 +26,13 @@ var webFS embed.FS
 
 const maxUploadBytes = 32 << 20
 
+// maxIngestItems는 한 요청에 받을 이미지 수입니다.
+//
+// 담을 장수 검사는 들어온 수를 더해서 보지만, 한 번에 엄청난 양이 오면
+// 그 한 묶음만으로 상한을 크게 넘깁니다. 수집 쪽이 보내는 묶음은 수백
+// 건 규모이므로 넉넉하게 잡아도 충분합니다.
+const maxIngestItems = 2048
+
 type StatsSource interface {
 	Ping(ctx context.Context) error
 	CountImages(ctx context.Context) (int64, error)
@@ -220,6 +227,12 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Items) == 0 {
 		writeJSON(w, http.StatusOK, IngestResponse{})
+		return
+	}
+	if len(req.Items) > maxIngestItems {
+		writeError(w, http.StatusRequestEntityTooLarge,
+			fmt.Errorf("한 번에 %d건이 왔습니다. %d건까지만 받습니다",
+				len(req.Items), maxIngestItems))
 		return
 	}
 

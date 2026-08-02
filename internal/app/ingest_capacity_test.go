@@ -103,3 +103,32 @@ func sampleIndexed() domain.IndexedImage {
 		Vectors: vectors,
 	}
 }
+
+// 이번 묶음까지 더해서 봐야 합니다.
+//
+// 지금 수만 보면 상한 바로 아래에서 묶음 하나가 통째로 들어가 크게
+// 넘칩니다. 상한이 1,000인데 999장 담긴 상태로 100장이 오면 1,099가
+// 됩니다.
+func TestIngestCountsTheIncomingBatch(t *testing.T) {
+	repo := &countingRepo{}
+	repo.count.Store(999)
+
+	in := newIngestWithLimit(t, 1000, repo)
+
+	batch := make([]domain.IndexedImage, 100)
+	for i := range batch {
+		item := sampleIndexed()
+		item.Image.SourcePostID = int64(i + 1)
+		batch[i] = item
+	}
+
+	err := in.Submit(context.Background(), batch)
+	if !errors.Is(err, domain.ErrIndexFull) {
+		t.Fatalf("999장 담긴 상태에서 100장을 받았습니다. 상한은 1000입니다: %v", err)
+	}
+
+	// 딱 맞게 들어가는 것은 받아야 합니다.
+	if err := in.Submit(context.Background(), batch[:1]); err != nil {
+		t.Errorf("한 장이 딱 들어가는데 거절했습니다: %v", err)
+	}
+}

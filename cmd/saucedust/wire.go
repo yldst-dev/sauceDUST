@@ -120,6 +120,7 @@ func (r *nodeRuntime) newQdrant() (*qdrant.Client, error) {
 		BaseURL:  r.cfg.QdrantURL,
 		APIKey:   r.cfg.QdrantAPIKey,
 		Quantize: true,
+		Log:      r.log,
 	})
 }
 

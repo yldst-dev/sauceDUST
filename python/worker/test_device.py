@@ -101,3 +101,64 @@ def test_cpu_constant_unchanged():
     assert device.CPU.name == "cpu"
     assert device.CPU.use_half is False
     assert device.CPU.batch_size == 4
+
+
+class _BrokenDriver:
+    """CUDA가 있다고 하지만 장치 정보를 묻는 것조차 실패합니다."""
+
+    class cuda:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def get_device_capability():
+            raise RuntimeError("CUDA driver version is insufficient")
+
+        @staticmethod
+        def get_arch_list():
+            raise RuntimeError("CUDA driver version is insufficient")
+
+        @staticmethod
+        def get_device_properties(_index):
+            raise RuntimeError("CUDA driver version is insufficient")
+
+    class backends:
+        class mps:
+            @staticmethod
+            def is_available():
+                return False
+
+            @staticmethod
+            def is_built():
+                return False
+
+    @staticmethod
+    def zeros(*_args, **_kwargs):
+        raise RuntimeError("CUDA driver version is insufficient")
+
+
+# 진단하다 터져도 CPU로 가야 합니다. 여기서 예외가 새면 워커가 못 뜹니다.
+def test_broken_driver_still_falls_back():
+    assert device._cuda_device(_BrokenDriver) is None
+
+
+# 연산은 되는데 장치 정보 조회만 실패하는 경우도 있습니다.
+class _ProbeOkButNoInfo(_BrokenDriver):
+    @staticmethod
+    def zeros(*_args, **_kwargs):
+        class _T:
+            def add_(self, _v):
+                return self
+
+            def sum(self):
+                return self
+
+            def item(self):
+                return 8.0
+
+        return _T()
+
+
+def test_probe_ok_but_info_fails_falls_back():
+    assert device._cuda_device(_ProbeOkButNoInfo) is None

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ type Client struct {
 	// quantize가 켜지면 컬렉션을 int8로 압축해서 저장합니다.
 	// 정확도 손실은 미미하고 용량은 4분의 1이 됩니다.
 	quantize bool
+	log      *slog.Logger
 }
 
 type Options struct {
@@ -31,6 +33,7 @@ type Options struct {
 	APIKey   string
 	Timeout  time.Duration
 	Quantize bool
+	Log      *slog.Logger
 }
 
 func New(opts Options) (*Client, error) {
@@ -40,11 +43,15 @@ func New(opts Options) (*Client, error) {
 	if opts.Timeout <= 0 {
 		opts.Timeout = 60 * time.Second
 	}
+	if opts.Log == nil {
+		opts.Log = slog.Default()
+	}
 	return &Client{
 		base:     strings.TrimRight(opts.BaseURL, "/"),
 		apiKey:   opts.APIKey,
 		http:     &http.Client{Timeout: opts.Timeout},
 		quantize: opts.Quantize,
+		log:      opts.Log,
 	}, nil
 }
 
@@ -104,6 +111,7 @@ func (c *Client) verifyCollection(ctx context.Context, m domain.EmbeddingModel) 
 					Vectors struct {
 						Size     int    `json:"size"`
 						Distance string `json:"distance"`
+						OnDisk   *bool  `json:"on_disk"`
 					} `json:"vectors"`
 				} `json:"params"`
 			} `json:"config"`
@@ -113,11 +121,35 @@ func (c *Client) verifyCollection(ctx context.Context, m domain.EmbeddingModel) 
 		return err
 	}
 
-	got := payload.Result.Config.Params.Vectors.Size
-	if got != 0 && got != m.VectorSize {
+	vectors := payload.Result.Config.Params.Vectors
+	if vectors.Size != 0 && vectors.Size != m.VectorSize {
 		return fmt.Errorf("%w: 컬렉션 %s의 차원이 %d인데 모델 %s는 %d입니다",
-			domain.ErrModelMismatch, m.Collection, got, m.ID, m.VectorSize)
+			domain.ErrModelMismatch, m.Collection, vectors.Size, m.ID, m.VectorSize)
 	}
+	if vectors.OnDisk == nil || !*vectors.OnDisk {
+		return c.moveVectorsToDisk(ctx, m.Collection)
+	}
+	return nil
+}
+
+// moveVectorsToDisk는 예전에 만든 컬렉션을 on_disk로 옮깁니다.
+//
+// 담을 장수 계산이 "원본은 디스크, 줄인 것만 메모리"를 전제로 합니다.
+// 만들 때 이 값을 넣기 전에 생긴 컬렉션은 그 전제 밖에 있어서, 같은
+// 계산을 쓰면 실제보다 훨씬 넉넉하게 나옵니다.
+//
+// 지금 판은 값을 안 넣어도 원본을 memmap으로 두는 것으로 재서 확인했지만,
+// 문서에 적힌 기본값이 아니라 판이 올라가며 바뀔 수 있습니다. 명시해 둡니다.
+func (c *Client) moveVectorsToDisk(ctx context.Context, name string) error {
+	// 이름 없는 기본 벡터라 빈 문자열을 키로 씁니다.
+	body := map[string]any{
+		"vectors": map[string]any{"": map[string]any{"on_disk": true}},
+	}
+	if err := c.call(ctx, http.MethodPatch, "/collections/"+name, body, nil); err != nil {
+		return fmt.Errorf("컬렉션 %s를 on_disk로 옮기지 못했습니다: %w", name, err)
+	}
+	c.log.Info("예전 컬렉션을 on_disk로 옮겼습니다. 재정리가 끝날 때까지 잠시 느릴 수 있습니다",
+		slog.String("collection", name))
 	return nil
 }
 

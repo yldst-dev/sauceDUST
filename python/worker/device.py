@@ -99,24 +99,38 @@ def select() -> Device:
 def _cuda_device(torch) -> Device | None:
     """쓸 수 있으면 CUDA 장치를, 아니면 None을 냅니다.
 
-    여기서 예외를 던지면 안 됩니다. 부르는 쪽의 CPU 대체는 모델을 올릴
-    때만 감싸고 있어서, 장치를 고르다 터지면 워커가 아예 뜨지 못합니다.
+    여기서 예외가 새어 나가면 안 됩니다. 부르는 쪽의 CPU 대체는 모델을
+    올릴 때만 감싸고 있어서, 장치를 고르다 터지면 워커가 아예 뜨지
+    못합니다. 드라이버가 반쯤 올라온 컴퓨터에서는 CUDA가 있다고 해 놓고
+    장치 정보를 묻는 것조차 실패할 수 있습니다.
     """
-    ok, why = cuda_usable(torch)
-    if not ok:
-        hint = arch_hint(torch.cuda.get_device_capability(), torch.cuda.get_arch_list())
-        log.warning(
-            "CUDA를 쓰지 못해 CPU로 갑니다 (%s)%s", why, f". {hint}" if hint else ""
+    try:
+        ok, why = cuda_usable(torch)
+        if not ok:
+            log.warning("CUDA를 쓰지 못해 CPU로 갑니다 (%s)%s", why, _hint(torch))
+            return None
+
+        capability = torch.cuda.get_device_capability()
+        props = torch.cuda.get_device_properties(0)
+        return Device(
+            name="cuda",
+            use_half=supports_fast_half(capability),
+            batch_override=batch_for_vram(props.total_memory / 1024**3),
         )
+    # 무엇이 터지든 CPU로 갑니다. 느린 것이 못 뜨는 것보다 낫습니다.
+    except Exception as exc:
+        log.warning("CUDA 장치를 살피다 실패해 CPU로 갑니다 (%s)", exc)
         return None
 
-    capability = torch.cuda.get_device_capability()
-    props = torch.cuda.get_device_properties(0)
-    return Device(
-        name="cuda",
-        use_half=supports_fast_half(capability),
-        batch_override=batch_for_vram(props.total_memory / 1024**3),
-    )
+
+def _hint(torch) -> str:
+    """왜 안 되는지 짐작해 덧붙입니다. 이것 때문에 실패하면 안 됩니다."""
+    try:
+        hint = arch_hint(torch.cuda.get_device_capability(), torch.cuda.get_arch_list())
+    except Exception:
+        return ""
+    return f". {hint}" if hint else ""
+
 
 
 CPU = Device(name="cpu", use_half=False)

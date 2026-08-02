@@ -18,7 +18,7 @@ import (
 //
 // 세지 못하면 받습니다. 저장소가 잠깐 흔들렸다고 들어온 결과를 버리면
 // 그 노드가 이미 내려받아 계산한 것이 통째로 사라집니다.
-func (in *Ingest) checkRoom(ctx context.Context) error {
+func (in *Ingest) checkRoom(ctx context.Context, incoming int) error {
 	if in.maxIndexed <= 0 || in.counter == nil {
 		return nil
 	}
@@ -27,7 +27,15 @@ func (in *Ingest) checkRoom(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	if count < in.maxIndexed {
+
+	// 이번 묶음까지 더해서 봅니다. 지금 수만 보면 상한 바로 아래에서
+	// 묶음 하나가 통째로 들어가 크게 넘칩니다.
+	//
+	// 이것으로도 완전히 막히지는 않습니다. 여러 노드가 같은 순간에
+	// 물어보면 다 같은 수를 보고 통과합니다. 넘칠 수 있는 양은
+	// 동시에 들어오는 묶음들의 합이고, 담을 장수를 낼 때 여유를
+	// 20퍼센트 빼 두므로 그 안에서 받아냅니다.
+	if count+int64(incoming) <= in.maxIndexed {
 		in.warnedFull.Store(false)
 		return nil
 	}
@@ -35,9 +43,11 @@ func (in *Ingest) checkRoom(ctx context.Context) error {
 	if in.warnedFull.CompareAndSwap(false, true) {
 		in.log.Warn("색인이 차서 더 받지 않습니다",
 			slog.Int64("담긴 장수", count),
+			slog.Int("들어온 묶음", incoming),
 			slog.Int64("상한", in.maxIndexed))
 	}
-	return fmt.Errorf("%w: %d장 담김, 상한 %d", domain.ErrIndexFull, count, in.maxIndexed)
+	return fmt.Errorf("%w: %d장 담김, %d장 더 받으면 상한 %d를 넘습니다",
+		domain.ErrIndexFull, count, incoming, in.maxIndexed)
 }
 
 // roomCount는 담긴 장수를 냅니다. 잠깐 기억해 두고 씁니다.

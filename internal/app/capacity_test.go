@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"saucedust/internal/domain"
 )
 
 // 실측에서 뽑은 값과 맞아야 합니다.
@@ -282,5 +284,30 @@ func TestCrawlerResumesWhenRoomAppears(t *testing.T) {
 
 	if crawler.atCapacity(context.Background()) {
 		t.Error("여유가 생겼는데 계속 찼다고 합니다")
+	}
+}
+
+// 찬 동안 재시도를 계속 꺼내면 임대할 때마다 시도 횟수가 올라갑니다.
+// 다섯 번을 채운 게시물은 나중에 자리가 생겨도 다시 잡히지 않습니다.
+func TestFullIndexDoesNotBurnRetries(t *testing.T) {
+	repo := &countingRepo{}
+	repo.count.Store(500)
+
+	cfg := baseConfig()
+	cfg.MaxIndexed = 500
+
+	lease := &fakeLease{frontier: 5000}
+	lease.retryQueue = []domain.PostRetry{{ID: 1, SourcePostID: 10}}
+	source := &rangeSource{latest: 4999}
+	source.fakeSource.failURL = map[string]error{}
+
+	crawler := newCrawlerWithCounter(t, cfg, source, lease, repo)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	crawler.Run(ctx)
+
+	if got := lease.snapshot(); len(got.retryDone) != 0 {
+		t.Errorf("찬 상태인데 재시도를 %d건 처리했습니다", len(got.retryDone))
 	}
 }

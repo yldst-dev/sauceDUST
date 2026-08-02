@@ -37,6 +37,11 @@ type LeaseRepository interface {
 	AdvanceWatermark(ctx context.Context, site, scope string, id int64) error
 	EnqueueRetries(ctx context.Context, site, scope string, postIDs []int64, delay time.Duration) error
 	LeaseRetries(ctx context.Context, site, scope, nodeID string, limit int, floor int64) ([]domain.PostRetry, error)
+	// ReleaseRange와 ReleaseRetry는 시도 횟수를 쓰지 않고 되돌립니다.
+	// 색인이 차서 못 넣은 것은 그 구간의 잘못이 아니므로, 실패로 적어
+	// 시도 횟수를 깎으면 나중에 자리가 생겨도 다시 잡히지 않습니다.
+	ReleaseRange(ctx context.Context, r *domain.CrawlRange) error
+	ReleaseRetry(ctx context.Context, item domain.PostRetry) error
 	FinishRetry(ctx context.Context, item domain.PostRetry, status domain.RetryStatus, cause error) error
 	RescheduleRetry(ctx context.Context, item domain.PostRetry, delay time.Duration, cause error) error
 }

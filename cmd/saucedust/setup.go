@@ -55,9 +55,9 @@ func cmdSetup(ctx context.Context, args []string) error {
 		return nil
 	}
 
-	workerDir := filepath.Join(root, "python", "worker")
-	if _, err := os.Stat(workerDir); err != nil {
-		return fmt.Errorf("워커 폴더가 없습니다: %s", workerDir)
+	workerDir, err := findWorkerDir(root)
+	if err != nil {
+		return err
 	}
 
 	python, err := findPython(*pythonBin)
@@ -174,6 +174,30 @@ print("모델을 모두 받았습니다.")
 	return runStep(ctx, workerDir, python, "-c", script)
 }
 
+// workerLayouts는 임베딩 워커가 놓일 수 있는 자리입니다.
+//
+// 저장소에서는 python/worker이고, 노드에 배포하면 실행 파일 옆의 worker입니다.
+// 한쪽만 보면 배포한 노드에서 setup이 실패합니다. 실제로 그랬습니다.
+var workerLayouts = [][]string{
+	{"python", "worker"},
+	{"worker"},
+}
+
+// findWorkerDir는 두 구조 중 실제로 있는 쪽을 고릅니다.
+func findWorkerDir(root string) (string, error) {
+	var tried []string
+	for _, parts := range workerLayouts {
+		dir := filepath.Join(append([]string{root}, parts...)...)
+		tried = append(tried, dir)
+		// main.py가 있어야 워커 폴더입니다. 이름만 같은 빈 폴더를 고르지 않습니다.
+		if _, err := os.Stat(filepath.Join(dir, "main.py")); err == nil {
+			return dir, nil
+		}
+	}
+	return "", fmt.Errorf("워커 폴더를 찾지 못했습니다. 다음을 찾아봤습니다:\n  %s",
+		strings.Join(tried, "\n  "))
+}
+
 func ensureEnvFile(root string) error {
 	target := filepath.Join(root, ".env")
 	if _, err := os.Stat(target); err == nil {
@@ -255,11 +279,17 @@ func cmdDoctor(ctx context.Context, args []string) error {
 		note("Python", "있음", pythonVersion(ctx, path), false)
 	}
 
-	venv := filepath.Join(root, "python", "worker", ".venv", "bin", "python")
-	if _, err := os.Stat(venv); err != nil {
-		note("가상 환경", "없음", "saucedust setup으로 만드십시오", true)
+	// setup과 같은 자리를 봐야 합니다. 한쪽만 보면 배포한 노드에서
+	// 멀쩡히 깔린 것을 없다고 합니다.
+	if workerDir, err := findWorkerDir(root); err != nil {
+		note("워커 폴더", "없음", err.Error(), true)
 	} else {
-		note("가상 환경", "있음", torchInfo(ctx, venv), false)
+		venv := filepath.Join(workerDir, ".venv", "bin", "python")
+		if _, err := os.Stat(venv); err != nil {
+			note("가상 환경", "없음", "saucedust setup으로 만드십시오", true)
+		} else {
+			note("가상 환경", "있음", torchInfo(ctx, venv), false)
+		}
 	}
 
 	if _, err := os.Stat(filepath.Join(root, ".env")); err != nil {

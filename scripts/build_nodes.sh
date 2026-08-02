@@ -44,7 +44,7 @@ done
 mkdir -p "$OUT/worker"
 cp -R python/worker/domain "$OUT/worker/"
 cp python/worker/*.py python/worker/*.json python/worker/requirements.txt "$OUT/worker/"
-rm -rf "$OUT/worker/domain/__pycache__"
+rm -rf "$OUT/worker/domain/__pycache__" "$OUT/worker/conftest.py"
 
 cp internal/config/env.example "$OUT/env.example"
 

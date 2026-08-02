@@ -228,3 +228,81 @@ func TestMax64(t *testing.T) {
 		}
 	}
 }
+
+// 저장소에서는 python/worker이고, 노드에 배포하면 실행 파일 옆의 worker입니다.
+// 한쪽만 보면 배포한 노드에서 setup이 실패합니다. 실제로 그랬습니다.
+func TestFindWorkerDirHandlesBothLayouts(t *testing.T) {
+	tests := []struct {
+		name  string
+		parts []string
+	}{
+		{"저장소 구조", []string{"python", "worker"}},
+		{"배포 꾸러미 구조", []string{"worker"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(append([]string{root}, tc.parts...)...)
+			if err := os.MkdirAll(dir, 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "main.py"), []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := findWorkerDir(root)
+			if err != nil {
+				t.Fatalf("찾지 못했습니다: %v", err)
+			}
+			if got != dir {
+				t.Errorf("%q입니다. %q를 기대했습니다", got, dir)
+			}
+		})
+	}
+}
+
+// 이름만 같고 안이 빈 폴더를 고르면 안 됩니다.
+func TestFindWorkerDirNeedsMainPy(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "worker"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := findWorkerDir(root); err == nil {
+		t.Error("main.py가 없는 폴더를 골랐습니다")
+	}
+}
+
+// 저장소 구조가 있으면 그쪽을 먼저 씁니다. 개발할 때 헷갈리지 않게 합니다.
+func TestFindWorkerDirPrefersRepoLayout(t *testing.T) {
+	root := t.TempDir()
+	for _, parts := range [][]string{{"python", "worker"}, {"worker"}} {
+		dir := filepath.Join(append([]string{root}, parts...)...)
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "main.py"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := findWorkerDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != filepath.Join(root, "python", "worker") {
+		t.Errorf("%q를 골랐습니다. 저장소 구조를 먼저 봐야 합니다", got)
+	}
+}
+
+func TestFindWorkerDirErrorNamesWhatItTried(t *testing.T) {
+	_, err := findWorkerDir(t.TempDir())
+	if err == nil {
+		t.Fatal("오류가 나야 합니다")
+	}
+	for _, want := range []string{"python", "worker"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("오류에 %q가 없습니다: %v", want, err)
+		}
+	}
+}

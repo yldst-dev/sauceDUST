@@ -15,8 +15,12 @@ func reembedFixture(t *testing.T, count int, withThumb func(int) bool) (*Store, 
 	store := testStore(t)
 	ctx := context.Background()
 
+	// query_cache는 embedding_models를 외래키로 걸지 않으므로 CASCADE로
+	// 지워지지 않습니다. 빼먹으면 두 번째 실행부터 앞선 시험이 남긴 것을
+	// 보게 되어, 처음 한 번만 통과하는 시험이 됩니다.
 	if _, err := store.pool.Exec(ctx,
-		`TRUNCATE image_vectors, images, embedding_models RESTART IDENTITY CASCADE`); err != nil {
+		`TRUNCATE image_vectors, images, query_cache, embedding_models
+         RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatalf("초기화 실패: %v", err)
 	}
 

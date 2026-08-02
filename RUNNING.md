@@ -76,10 +76,10 @@ python3.12 -m venv .venv
 
 ```bash
 ./saucedust migrate
-./saucedust model add -id dinov2-vitb14 -kind copy \
-  -backend transformers -checkpoint facebook/dinov2-base -vector-size 768
-./saucedust model add -id siglip-b16 -kind semantic \
+./saucedust model add -id siglip-b16 -kind copy \
   -backend transformers -checkpoint google/siglip-base-patch16-224 -vector-size 768
+./saucedust model add -id clip-b32 -kind semantic \
+  -backend transformers -checkpoint laion/CLIP-ViT-B-32-laion2B-s34B-b79K -vector-size 512
 ./saucedust model ls
 ```
 
@@ -112,9 +112,9 @@ cd python/worker
 Danbooru를 다시 훑을 필요는 없습니다.
 
 ```bash
-saucedust model add -id dinov2-vitl14 -kind copy -vector-size 1024
-saucedust reembed -model dinov2-vitl14 -dry-run
-saucedust reembed -model dinov2-vitl14
+saucedust model add -id 새모델 -kind copy -vector-size 768
+saucedust reembed -model 새모델 -dry-run
+saucedust reembed -model 새모델
 ```
 
 `-dry-run`은 할 일이 몇 건인지만 세어 봅니다. 며칠 걸릴 수 있으니 먼저

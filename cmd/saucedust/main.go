@@ -66,6 +66,8 @@ func run() error {
 		return cmdCheckPost(ctx, args)
 	case "rebuild":
 		return cmdRebuild(ctx, args)
+	case "reembed":
+		return cmdReembed(ctx, args)
 	case "version", "-v", "--version":
 		fmt.Printf("saucedust %s (%s)\n", buildVersion, app.Version)
 		return nil
@@ -99,6 +101,7 @@ func usage() {
   saucedust ranges gaps        수집되지 않은 ID 대역을 찾습니다
   saucedust ranges fill        빈 대역을 수집 대상에 넣습니다
   saucedust rebuild            PostgreSQL 벡터로 Qdrant를 다시 채웁니다
+  saucedust reembed            축소본으로 벡터를 다시 만듭니다 (모델을 바꿨을 때)
 
 설치:
   saucedust setup              이 컴퓨터를 노드로 쓸 수 있게 준비합니다

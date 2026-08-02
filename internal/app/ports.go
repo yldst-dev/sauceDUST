@@ -51,6 +51,10 @@ type ImageRepository interface {
 	ImageBySource(ctx context.Context, site string, postID int64) (*domain.Image, error)
 	ImagesByIDs(ctx context.Context, ids []int64) (map[int64]domain.Image, error)
 	CountImages(ctx context.Context) (int64, error)
+	// ThumbsMissingVector는 축소본은 있는데 이 모델의 벡터가 없는 이미지를
+	// 커서 방식으로 냅니다. 모델을 바꿨을 때 다시 계산할 대상입니다.
+	ThumbsMissingVector(ctx context.Context, modelID string, afterID int64, limit int) ([]domain.ThumbRef, error)
+	CountThumbsMissingVector(ctx context.Context, modelID string) (int64, error)
 }
 
 type VectorRepository interface {

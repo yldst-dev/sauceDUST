@@ -122,13 +122,33 @@ cmd  ──▶  adapter  ──▶  app  ──▶  domain
 6만 배 어려운 문제입니다. 지금 결론은 "셋 다 쓸 만하다"까지입니다.
 
 지금은 DINOv2를 copy로 씁니다. 스스로 지도학습으로 배운 모델이라 글이나
-분위기가 아니라 그림 자체의 생김새를 봅니다. 대량 수집을 시작하기 전에
-후보를 수만 장으로 늘려 다시 재는 것이 좋습니다.
+분위기가 아니라 그림 자체의 생김새를 봅니다.
 
 ```bash
 python/worker/.venv/bin/python python/worker/benchmark.py \
-  --images ~/.saucedust/thumbs --limit 20000
+  --images ~/.saucedust/thumbs --limit 20000 --queries 2000
 ```
+
+`--limit`이 후보 수, `--queries`가 검색해 볼 횟수입니다. 어려움을 정하는
+것은 후보 수이고 걸리는 시간을 정하는 것은 검색 횟수입니다.
+
+### 모델을 나중에 바꿀 수 있습니다
+
+축소본을 남겨 두는 이유가 이것입니다. 모델을 바꾸면 쌓인 벡터가 전부
+쓸모없어지지만, Danbooru를 다시 훑을 필요는 없습니다.
+
+```bash
+saucedust model add -id dinov2-vitl14 -kind copy -vector-size 1024
+saucedust reembed -model dinov2-vitl14 -dry-run
+saucedust reembed -model dinov2-vitl14
+```
+
+축소본에서 다시 계산하므로 네트워크를 쓰지 않고 GPU 속도만큼 나갑니다.
+다시 내려받으면 28일이지만 이쪽은 며칠이면 끝납니다. 중간에 멈춰도
+다음에 부르면 아직 벡터가 없는 것부터 이어서 합니다.
+
+`rebuild`와 다릅니다. `rebuild`는 PostgreSQL에 이미 있는 벡터를 Qdrant로
+옮기는 복구용이고, `reembed`는 벡터 자체를 새 모델로 다시 만드는 것입니다.
 
 ### 벡터로 좁히고 해시로 가릅니다
 

@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"saucedust/internal/adapter/danbooru"
+	"saucedust/internal/adapter/filestore"
 	"saucedust/internal/adapter/netpath"
+	"saucedust/internal/app"
 	"saucedust/internal/domain"
 )
 
@@ -477,6 +479,99 @@ func cmdRebuild(ctx context.Context, args []string) error {
 	rt.log.Info("색인을 다시 채웠습니다",
 		slog.Int("vectors", total), slog.Duration("took", time.Since(started)))
 	return nil
+}
+
+// cmdReembed는 보관해 둔 축소본으로 벡터를 다시 만듭니다.
+//
+// 모델을 바꾸면 쌓인 벡터가 전부 쓸모없어집니다. 원본은 저장하지 않지만
+// 축소본은 남겨 두므로 Danbooru를 다시 훑지 않아도 됩니다. 1,190만 장을
+// 다시 내려받으면 초당 5회 제한에서 28일이지만, 축소본에서 다시 계산하면
+// 네트워크를 쓰지 않아 GPU 속도만큼 빠릅니다.
+//
+// rebuild와 다릅니다. rebuild는 PostgreSQL에 이미 있는 벡터를 Qdrant로
+// 옮기는 것이고, 이쪽은 벡터 자체를 새 모델로 다시 만드는 것입니다.
+func cmdReembed(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("reembed", flag.ContinueOnError)
+	modelID := fs.String("model", "", "다시 계산할 모델 이름. 비우면 활성 모델 전부")
+	batch := fs.Int("batch", 256, "한 번에 가져올 이미지 수")
+	workers := fs.Int("workers", 8, "워커에 동시에 보낼 요청 수")
+	dryRun := fs.Bool("dry-run", false, "할 일만 세어 보고 실제로 하지 않습니다")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	rt, err := boot(ctx)
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
+
+	embedder, err := rt.newEmbedder()
+	if err != nil {
+		return err
+	}
+	models, err := rt.activeModels(ctx, embedder)
+	if err != nil {
+		return err
+	}
+	if *modelID != "" {
+		models = filterModels(models, *modelID)
+		if len(models) == 0 {
+			return fmt.Errorf("활성 모델 중에 %q가 없습니다", *modelID)
+		}
+	}
+
+	if *dryRun {
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+		fmt.Fprintln(w, "모델\t다시 계산할 건수")
+		for _, m := range models {
+			n, err := rt.store.CountThumbsMissingVector(ctx, m.ID)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(w, "%s\t%s\n", m.ID, comma(n))
+		}
+		return w.Flush()
+	}
+
+	index, err := rt.newQdrant()
+	if err != nil {
+		return err
+	}
+	thumbs, err := filestore.NewThumbStore(rt.cfg.ThumbDir)
+	if err != nil {
+		return err
+	}
+
+	reembed, err := app.NewReembed(app.ReembedDeps{
+		Images: rt.store, Vector: rt.store, Index: index, Thumbs: thumbs,
+		Embedder: embedder, Log: rt.log, Workers: *workers, BatchSize: *batch,
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, m := range models {
+		result, err := reembed.Run(ctx, m)
+		if err != nil {
+			return err
+		}
+		if result.Missing > 0 {
+			rt.log.Warn("축소본이 없어 건너뛴 것이 있습니다. 이것은 다시 내려받아야 합니다",
+				slog.String("model", m.ID), slog.Int("건수", result.Missing))
+		}
+	}
+	return nil
+}
+
+func filterModels(models []domain.EmbeddingModel, id string) []domain.EmbeddingModel {
+	var out []domain.EmbeddingModel
+	for _, m := range models {
+		if m.ID == id {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // truncate는 표 한 칸에 들어가도록 문자열을 줄입니다.

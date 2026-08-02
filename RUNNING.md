@@ -94,13 +94,41 @@ python3.12 -m venv .venv
 
 ```bash
 cd python/worker
-./.venv/bin/python benchmark.py --images ~/.saucedust/thumbs --limit 300
+./.venv/bin/python benchmark.py \
+  --images ~/.saucedust/thumbs --limit 20000 --queries 2000
 ```
 
 원본을 망가뜨린 복사본으로 검색해서 원본이 1등에 나오는 비율을 잽니다.
 비교 기준선으로 지각 해시만 쓴 결과도 함께 나옵니다.
 
-대량 수집을 시작하기 전에 정하십시오. 나중에 바꾸면 전부 다시 계산해야 합니다.
+`--limit`은 후보 수, `--queries`는 검색해 볼 횟수입니다. 어려움을 정하는
+것은 후보 수입니다. 후보가 적으면 어느 모델이든 다 맞혀서 우열을 가릴 수
+없습니다. 실측에서 후보 200장으로는 세 모델이 모두 99.8퍼센트를 넘었습니다.
+수만 장으로 잡으십시오.
+
+## 모델을 바꾸기
+
+바꾸면 쌓인 벡터가 전부 쓸모없어집니다. 다만 축소본을 남겨 두므로
+Danbooru를 다시 훑을 필요는 없습니다.
+
+```bash
+saucedust model add -id dinov2-vitl14 -kind copy -vector-size 1024
+saucedust reembed -model dinov2-vitl14 -dry-run
+saucedust reembed -model dinov2-vitl14
+```
+
+`-dry-run`은 할 일이 몇 건인지만 세어 봅니다. 며칠 걸릴 수 있으니 먼저
+확인하십시오. 중간에 멈춰도 다음에 부르면 아직 벡터가 없는 것부터 이어서
+합니다.
+
+워커의 `models.json`도 함께 고쳐야 합니다. 고치지 않으면 워커가 새 모델을
+올리지 않아 벡터를 주지 못합니다.
+
+`rebuild`와 헷갈리지 마십시오. `rebuild`는 PostgreSQL에 이미 있는 벡터를
+Qdrant로 옮기는 복구용입니다. Qdrant 저장소를 잃었을 때 씁니다.
+`reembed`는 벡터 자체를 새 모델로 다시 만듭니다.
+
+축소본 파일이 없어진 건수는 따로 셉니다. 그것만은 다시 내려받아야 합니다.
 
 ## 실행
 

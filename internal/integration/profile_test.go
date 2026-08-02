@@ -122,6 +122,14 @@ func (nopImages) ImagesByIDs(context.Context, []int64) (map[int64]domain.Image, 
 }
 func (nopImages) CountImages(context.Context) (int64, error) { return 0, nil }
 
+func (nopImages) ThumbsMissingVector(context.Context, string, int64, int) ([]domain.ThumbRef, error) {
+	return nil, nil
+}
+
+func (nopImages) CountThumbsMissingVector(context.Context, string) (int64, error) {
+	return 0, nil
+}
+
 type nopVectors struct{}
 
 func (nopVectors) SaveVectors(context.Context, int64, []domain.Vector) error    { return nil }

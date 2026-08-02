@@ -150,6 +150,15 @@ type Vector struct {
 	Values  []float32
 }
 
+// ThumbRef는 다시 계산할 이미지 한 건입니다.
+// 모델을 바꿨을 때 원본 대신 축소본으로 벡터를 다시 만드는 데 씁니다.
+type ThumbRef struct {
+	ImageID      int64
+	SourceSite   string
+	SourcePostID int64
+	ThumbPath    string
+}
+
 type IndexedImage struct {
 	Image   Image
 	Vectors []Vector

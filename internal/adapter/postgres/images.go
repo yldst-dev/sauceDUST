@@ -307,6 +307,65 @@ WHERE NOT EXISTS (
 	return out, rows.Err()
 }
 
+// ThumbsMissingVector는 축소본은 있는데 이 모델의 벡터가 없는 이미지를 냅니다.
+//
+// 모델을 바꾸면 쌓인 것을 전부 다시 계산해야 합니다. 원본은 저장하지 않지만
+// 축소본은 남겨 두므로 Danbooru를 다시 훑지 않아도 됩니다. 이 조회가 그
+// 대상을 찾아 줍니다.
+//
+// 커서로 넘깁니다. OFFSET을 쓰면 뒤로 갈수록 앞부분을 매번 다시 세게 되어
+// 1천만 행에서는 끝까지 가지 못합니다.
+func (s *Store) ThumbsMissingVector(ctx context.Context, modelID string,
+	afterID int64, limit int) ([]domain.ThumbRef, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+
+	rows, err := s.pool.Query(ctx, `
+SELECT id, source_site, source_post_id, thumb_path
+FROM images
+WHERE id > $1
+  AND thumb_path IS NOT NULL AND thumb_path <> ''
+  AND NOT EXISTS (
+      SELECT 1 FROM image_vectors v
+      WHERE v.image_id = images.id AND v.model_id = $2
+  )
+ORDER BY id
+LIMIT $3`, afterID, modelID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("다시 계산할 이미지를 찾지 못했습니다: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.ThumbRef
+	for rows.Next() {
+		var item domain.ThumbRef
+		if err := rows.Scan(&item.ImageID, &item.SourceSite,
+			&item.SourcePostID, &item.ThumbPath); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// CountThumbsMissingVector는 남은 일이 얼마나 되는지 셉니다.
+// 며칠 걸릴 수도 있는 작업이라 시작 전에 규모를 알려 줍니다.
+func (s *Store) CountThumbsMissingVector(ctx context.Context, modelID string) (int64, error) {
+	var n int64
+	err := s.pool.QueryRow(ctx, `
+SELECT count(*) FROM images
+WHERE thumb_path IS NOT NULL AND thumb_path <> ''
+  AND NOT EXISTS (
+      SELECT 1 FROM image_vectors v
+      WHERE v.image_id = images.id AND v.model_id = $1
+  )`, modelID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("다시 계산할 수를 세지 못했습니다: %w", err)
+	}
+	return n, nil
+}
+
 func (s *Store) CachedQuery(ctx context.Context, sha, modelID string) ([]float32, bool, error) {
 	var raw []byte
 	err := s.pool.QueryRow(ctx, `

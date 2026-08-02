@@ -6,7 +6,13 @@
 
 # 빌드 결과
 /saucedust
+/saucedust.exe
 /dist/
+
+# go test가 남기는 것.
+# testdata/fuzz 아래 퍼즈 씨앗은 회귀 시험이라 일부러 넣습니다.
+*.test
+coverage.out
 
 # Python
 .venv/

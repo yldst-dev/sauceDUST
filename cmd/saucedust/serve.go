@@ -89,8 +89,12 @@ func cmdControl(ctx context.Context, args []string) error {
 		return err
 	}
 
+	// 여기까지 왔는데 토큰이 비었다면 되돌아오는 주소입니다.
+	// 밖으로 열린 주소는 httpapi.New가 이미 막았습니다.
 	if rt.cfg.ControlToken == "" {
-		rt.log.Warn("SAUCEDUST_CONTROL_TOKEN이 비어 있어 API가 열려 있습니다")
+		rt.log.Warn("토큰이 없어 이 컴퓨터 안에서만 씁니다",
+			slog.String("bind", rt.cfg.ControlBind),
+			slog.String("고치려면", "SAUCEDUST_CONTROL_TOKEN과 SAUCEDUST_CONTROL_BIND를 함께 설정하십시오"))
 	}
 
 	tasks := []namedTask{

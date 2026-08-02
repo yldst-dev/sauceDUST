@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"sync"
@@ -58,9 +59,16 @@ type Server struct {
 	http *http.Server
 }
 
+// minTokenLen은 밖으로 열 때 요구하는 토큰 길이입니다.
+// 여러 사람이 나눠 쓰는 값이라 짧으면 그대로 뚫립니다.
+const minTokenLen = 16
+
 func New(cfg Config, deps Deps) (*Server, error) {
 	if cfg.Bind == "" {
 		return nil, errors.New("서버 주소가 비어 있습니다")
+	}
+	if err := checkExposure(cfg.Bind, cfg.Token); err != nil {
+		return nil, err
 	}
 	if cfg.NodeTimeout <= 0 {
 		cfg.NodeTimeout = 90 * time.Second
@@ -140,8 +148,51 @@ func (s *Server) routes() http.Handler {
 	return logging(s.deps.Log, mux)
 }
 
+// checkExposure는 밖에서 닿는 주소에 토큰 없이 뜨는 것을 막습니다.
+//
+// authed가 토큰이 빈 동안은 아무것도 검사하지 않기 때문에, 이 확인이 없으면
+// 바인드 주소만 바꾸고 토큰을 빠뜨렸을 때 /v1/ingest가 그대로 열립니다.
+// 아무나 자료를 밀어 넣을 수 있고, 넣은 쪽을 나중에 가려낼 방법도 없습니다.
+//
+// 되돌아오는 주소에서는 그냥 두어 혼자 쓸 때 번거롭지 않게 합니다.
+func checkExposure(bind, token string) error {
+	if bindIsLoopback(bind) {
+		return nil
+	}
+	if token == "" {
+		return fmt.Errorf("%s로 열려면 SAUCEDUST_CONTROL_TOKEN이 있어야 합니다."+
+			" 토큰이 없으면 닿을 수 있는 누구나 자료를 넣고 검색할 수 있습니다", bind)
+	}
+	if len(token) < minTokenLen {
+		return fmt.Errorf("SAUCEDUST_CONTROL_TOKEN이 %d자입니다. 밖으로 열 때는 %d자 이상이어야 합니다",
+			len(token), minTokenLen)
+	}
+	return nil
+}
+
+// bindIsLoopback은 그 주소가 이 컴퓨터 안에서만 닿는지 봅니다.
+//
+// 판단이 서지 않으면 아니라고 답합니다. 틀렸을 때 한쪽은 시작을 막을 뿐이고
+// 다른 쪽은 인증 없는 서버를 여는 것이라, 안전한 쪽으로 기웁니다.
+func bindIsLoopback(bind string) bool {
+	host, _, err := net.SplitHostPort(bind)
+	if err != nil {
+		return false
+	}
+	switch host {
+	case "":
+		// ":8000"은 모든 주소에 붙는다는 뜻입니다.
+		return false
+	case "localhost":
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // authed는 토큰이 설정되어 있을 때만 검사합니다.
 // 혼자 쓰는 단일 노드 환경에서 토큰 없이 시작할 수 있게 하기 위해서입니다.
+// 밖으로 열 때 토큰이 있는지는 checkExposure가 시작 전에 확인합니다.
 func (s *Server) authed(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.Token != "" {

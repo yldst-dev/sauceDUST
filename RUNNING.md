@@ -281,7 +281,70 @@ CRAWL_BACKFILL_FLOOR=7900000
 디스크로 내려 봤는데 하한이 내려가기는커녕 조금 올라갔습니다. 손대지
 마십시오.
 
-## Proxmox 가상 기계에 올릴 때
+## Proxmox 가상 기계 권장 사양
+
+메모리 8 GB에 GPU를 넘겨 한 대로 다 하는 구성입니다. 담는 장수는 약
+400만 장이고, 그 근거는 [메모리가 8 GB뿐일 때](#메모리가-8-gb뿐일-때)에
+있습니다.
+
+| | 값 | 왜 |
+|---|---|---|
+| 메모리 | 8 GB, 풍선 끄기 | 상한 아래로 내려가면 Qdrant가 죽습니다 |
+| vCPU | 4 | 넘어도 소용없습니다. 상대 제한이 초당 5장입니다 |
+| CPU 종류 | `host` | torch가 AVX를 씁니다. `kvm64`면 느려집니다 |
+| 기계 종류 | `q35` | PCIe 패스스루에 필요합니다 |
+| BIOS | `OVMF (UEFI)` | 위와 같습니다 |
+| 디스크 컨트롤러 | VirtIO SCSI single | |
+| NVMe | 128 GB, `cache=none` | 시스템과 Qdrant와 PostgreSQL |
+| HDD | 150 GB 이상 | 축소본만. 패스스루 그대로 |
+| 네트워크 | VirtIO | |
+| GPU | PCIe 패스스루 | |
+
+`cache=none`이 아니면 호스트가 갑자기 꺼졌을 때 PostgreSQL이 지켰다고 믿은
+쓰기가 사라집니다.
+
+400만 장을 채웠을 때 NVMe에 들어가는 것입니다.
+
+| | |
+|---|---|
+| Qdrant | 16 GB |
+| PostgreSQL 벡터 백업 | 13 GB |
+| PostgreSQL 메타데이터 | 3 GB |
+| 시스템, 가상 환경, torch, 가중치 | 약 20 GB |
+| WAL과 여유 | 나머지 |
+
+축소본 104 GB는 HDD로 갑니다.
+
+### 함께 넣을 설정
+
+```bash
+# .env
+CRAWL_BACKFILL_FLOOR=8500000            # 최근 약 340만 장. 여유를 둡니다
+SAUCEDUST_THUMB_DIR=/mnt/hdd/saucedust/thumbs
+SAUCEDUST_DATA_DIR=/var/lib/saucedust
+```
+
+`models.json`에서 `clip-b32`를 지워 SigLIP 하나만 씁니다. 두 모델을 다
+쓰면 담는 장수가 240만으로 줄어듭니다.
+
+PostgreSQL은 `shared_buffers = 1GB`면 충분합니다. 더 올리면 Qdrant 몫을
+빼앗습니다.
+
+### 메모리를 더 줄 수 있게 되면
+
+Danbooru 전체는 1,190만 장입니다. 여유 20퍼센트를 뺀 값입니다.
+
+| 메모리 | SigLIP 하나 | 모델 둘 |
+|---|---|---|
+| 8 GB | 410만 | 240만 |
+| 16 GB | 1,070만 | 620만 |
+| 24 GB | **전체** | 1,000만 |
+| 32 GB | 전체 | **전체** |
+
+**검색 속도는 넷 다 같습니다.** 메모리는 속도가 아니라 담는 양을 정합니다.
+늘렸으면 `CRAWL_BACKFILL_FLOOR`를 낮춰 이어서 내려가면 됩니다.
+
+## Proxmox 패스스루에서 걸리는 곳
 
 GPU를 PCIe로 넘기면 계산 성능은 그대로입니다. 걸리는 곳은 따로 있습니다.
 

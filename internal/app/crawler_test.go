@@ -25,6 +25,7 @@ type fakeLease struct {
 	nextID      int64
 	retryQueue  []domain.PostRetry
 	retryDone   []domain.RetryStatus
+	floorSeen   int64
 	rescheduled int
 }
 
@@ -37,6 +38,7 @@ func (f *fakeLease) AcquireBackfillRange(_ context.Context, req domain.LeaseRequ
 	}
 	f.nextID++
 	f.rangeSize = req.RangeSize
+	f.floorSeen = req.FloorID
 
 	upper := f.frontier - 1
 	lower := upper - req.RangeSize + 1
@@ -118,6 +120,7 @@ func (f *fakeLease) snapshot() fakeLease {
 	defer f.mu.Unlock()
 	return fakeLease{
 		watermark: f.watermark, frontier: f.frontier, rangeSize: f.rangeSize,
+		floorSeen:   f.floorSeen,
 		handedOut:   append([]domain.CrawlRange(nil), f.handedOut...),
 		finished:    append([]domain.RangeStatus(nil), f.finished...),
 		enqueued:    append([]int64(nil), f.enqueued...),

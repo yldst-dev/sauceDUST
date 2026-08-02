@@ -22,6 +22,13 @@ type CrawlerConfig struct {
 	BaseRangeSize   int64
 	RetryBatch      int
 	Adaptive        bool
+	// BackfillFloor는 과거로 내려가는 하한입니다. 이 번호보다 작은 게시물은
+	// 아예 보지 않습니다. 0이면 1번까지 내려갑니다.
+	//
+	// 메모리가 넉넉하지 않은 곳에서 씁니다. Qdrant가 붙들고 있어야 하는
+	// 양은 장수에 정비례하므로, 다 모으고 나서 줄일 수가 없습니다.
+	// 최신 것부터 채우니 하한을 두면 최근 구간만 남습니다.
+	BackfillFloor int64
 	// MaxImages는 이만큼 저장하면 스스로 멈춥니다. 0이면 끝없이 돕니다.
 	//
 	// 새 노드를 세운 뒤 정말 도는지 확인할 때 씁니다. 확인하려고 끝없이
@@ -192,6 +199,7 @@ func (c *Crawler) runBackfill(ctx context.Context) {
 			ScopeKey:   c.cfg.ScopeKey,
 			NodeID:     c.cfg.NodeID,
 			RangeSize:  c.rangeSize(),
+			FloorID:    c.cfg.BackfillFloor,
 		})
 		if err != nil {
 			if ctx.Err() != nil {

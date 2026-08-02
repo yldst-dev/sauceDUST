@@ -456,3 +456,27 @@ func TestExampleCoversEveryKey(t *testing.T) {
 		t.Error("본보기가 비어 있는 것 같습니다")
 	}
 }
+
+// 수집 하한은 메모리가 넉넉하지 않은 곳에서 범위를 막는 수단입니다.
+// 음수가 들어오면 조용히 넘기지 말고 막아야 합니다.
+func TestBackfillFloor(t *testing.T) {
+	root := baseEnv(t)
+	t.Setenv("CRAWL_BACKFILL_FLOOR", "8000000")
+
+	cfg, err := Load(root)
+	if err != nil {
+		t.Fatalf("읽기 실패: %v", err)
+	}
+	if cfg.BackfillFloor != 8_000_000 {
+		t.Errorf("하한이 %d입니다", cfg.BackfillFloor)
+	}
+}
+
+func TestBackfillFloorRejectsNegative(t *testing.T) {
+	root := baseEnv(t)
+	t.Setenv("CRAWL_BACKFILL_FLOOR", "-1")
+
+	if _, err := Load(root); err == nil {
+		t.Error("음수 하한을 받아들였습니다")
+	}
+}

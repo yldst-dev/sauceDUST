@@ -291,6 +291,7 @@ func (r *nodeRuntime) newCrawler(ctx context.Context, models []domain.EmbeddingM
 		PollEvery:       r.cfg.PollEvery,
 		BackfillWorkers: r.cfg.BackfillWorkers,
 		BaseRangeSize:   r.cfg.BackfillRangeSize,
+		BackfillFloor:   r.cfg.BackfillFloor,
 		Adaptive:        r.cfg.Adaptive,
 		MaxImages:       maxImages,
 	}, source, r.store, indexer, r.log)

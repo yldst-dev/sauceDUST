@@ -1,0 +1,9 @@
+anyio
+fastapi
+numpy
+pillow
+python-multipart
+torch
+torchvision
+transformers
+uvicorn[standard]

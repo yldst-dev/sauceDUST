@@ -1,0 +1,27 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.qdrant-initialized
+.sauce-proxy-bandwidth.json
+
+/target/
+/dist/
+/snapshots/
+/vpntest/
+
+danbooru_records*.json
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+*.log
+*.pid
+*.sock
+*.tmp
+
+# Go
+/saucedust
+/dist/

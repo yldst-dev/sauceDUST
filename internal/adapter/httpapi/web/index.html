@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>saucedust</title>
+<style>
+:root {
+  --ink: #0d131f;
+  --panel: #151d2c;
+  --edge: #222e44;
+  --text: #e6ecf5;
+  --haze: #7386a5;
+  --signal: #4dd9c0;
+  --mid: #5ab7e8;
+  --ember: #ff9a63;
+  --alarm: #ff5c7a;
+  --track: #1d2739;
+
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --ink: #eef1f6;
+    --panel: #ffffff;
+    --edge: #d5dce7;
+    --text: #10182a;
+    --haze: #5d6b84;
+    --signal: #0f9e86;
+    --mid: #2277b8;
+    --ember: #c85a1c;
+    --alarm: #d02648;
+    --track: #dde3ec;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 20px 64px;
+}
+
+/* 머리말 ------------------------------------------------------------ */
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 56px;
+  border-bottom: 1px solid var(--edge);
+  margin-bottom: 36px;
+}
+
+.brand {
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.live {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--haze);
+  font-variant-numeric: tabular-nums;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--signal);
+}
+
+.dot.beat { animation: beat 900ms ease-out; }
+
+@keyframes beat {
+  from { transform: scale(2.2); opacity: 0.35; }
+  to   { transform: scale(1);   opacity: 1; }
+}
+
+.dot.stale { background: var(--alarm); }
+
+/* 시그니처: 거꾸로 차는 ID 진행 막대 -------------------------------- */
+
+.frontier { margin-bottom: 44px; }
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--haze);
+  margin-bottom: 14px;
+}
+
+.scale {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 8px;
+}
+
+.scale b {
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.scale span {
+  font-size: 11px;
+  color: var(--haze);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.track {
+  position: relative;
+  height: 34px;
+  background: var(--track);
+  border: 1px solid var(--edge);
+  overflow: hidden;
+}
+
+/* 채움은 오른쪽 끝에 붙어 왼쪽으로 자랍니다. 크롤러가 최신에서 과거로
+   내려가는 실제 방향과 같습니다. */
+.fill {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 0;
+  background: var(--signal);
+  transition: width 600ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.legend {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--haze);
+  font-variant-numeric: tabular-nums;
+}
+
+.legend .pct { color: var(--signal); font-family: var(--mono); }
+
+.legend em {
+  font-style: normal;
+  font-family: var(--mono);
+  color: var(--text);
+}
+
+/* 노드 --------------------------------------------------------------- */
+
+.nodes { width: 100%; border-collapse: collapse; margin-bottom: 40px; }
+
+.nodes th {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--haze);
+  padding: 0 12px 10px 0;
+  border-bottom: 1px solid var(--edge);
+}
+
+.nodes td {
+  padding: 13px 12px 13px 0;
+  border-bottom: 1px solid var(--edge);
+  font-variant-numeric: tabular-nums;
+}
+
+.nodes tr:last-child td { border-bottom: none; }
+
+.nodes .num { text-align: right; font-family: var(--mono); }
+
+.name { font-family: var(--mono); }
+
+.name.off { color: var(--haze); }
+
+.state {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 9px;
+  vertical-align: 1px;
+  background: var(--signal);
+}
+
+.state.off { background: var(--haze); }
+
+.role { color: var(--haze); font-size: 12px; }
+
+/* 경로는 direct에서 vpn까지 순서가 있는 값이라 램프로 나타냅니다.
+   앞쪽일수록 빠르고 뒤쪽일수록 느립니다. */
+.path {
+  font-family: var(--mono);
+  font-size: 12px;
+  border-bottom: 2px solid currentColor;
+  padding-bottom: 1px;
+}
+
+.path.direct { color: var(--signal); }
+.path.ech    { color: var(--mid); }
+.path.frag   { color: var(--ember); }
+.path.vpn    { color: var(--alarm); }
+.path.unknown { color: var(--haze); border-bottom-color: transparent; }
+
+/* 아래 지표 ---------------------------------------------------------- */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  background: var(--edge);
+  border: 1px solid var(--edge);
+}
+
+.tile { background: var(--panel); padding: 16px 18px; }
+
+.tile dt {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--haze);
+  margin-bottom: 6px;
+}
+
+.tile dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 19px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile dd.warn { color: var(--ember); }
+.tile dd.bad { color: var(--alarm); }
+
+.empty { color: var(--haze); padding: 28px 0; }
+
+/* 토큰 입력 ---------------------------------------------------------- */
+
+.gate {
+  border: 1px solid var(--edge);
+  background: var(--panel);
+  padding: 20px;
+  margin-bottom: 28px;
+}
+
+.gate p { margin: 0 0 12px; color: var(--haze); }
+
+.gate form { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.gate input {
+  flex: 1 1 220px;
+  background: var(--ink);
+  border: 1px solid var(--edge);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 9px 11px;
+}
+
+.gate button {
+  background: var(--text);
+  color: var(--ink);
+  border: 0;
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 9px 18px;
+  cursor: pointer;
+}
+
+:focus-visible { outline: 2px solid var(--mid); outline-offset: 2px; }
+
+[hidden] { display: none !important; }
+
+/* 좁은 화면에서는 표를 카드로 접습니다. 머리글이 사라지므로 각 칸이
+   자기 이름표를 직접 달아 숫자만 덩그러니 남지 않게 합니다. */
+@media (max-width: 640px) {
+  .scale { flex-wrap: wrap; gap: 4px 10px; }
+  .scale b { font-size: 16px; }
+  .legend { flex-direction: column; gap: 3px; }
+
+  .nodes thead { display: none; }
+
+  .nodes tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 7px 14px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--edge);
+  }
+
+  .nodes td { border: none; padding: 0; text-align: left; }
+  .nodes td.name { grid-column: 1; font-size: 15px; }
+  .nodes td.head-role { grid-column: 2; text-align: right; }
+  .nodes td.num { text-align: left; }
+
+  .nodes td[data-label]::before {
+    content: attr(data-label);
+    display: inline-block;
+    min-width: 46px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--haze);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fill, .mark { transition: none; }
+  .dot.beat { animation: none; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="bar">
+    <div class="brand">saucedust</div>
+    <div class="live">
+      <span class="dot" id="pulse"></span>
+      <span id="summary">연결하는 중</span>
+    </div>
+  </header>
+
+  <section class="gate" id="gate" hidden>
+    <p>중앙 서버가 토큰을 요구합니다. <code>SAUCEDUST_CONTROL_TOKEN</code> 값을 넣으십시오.</p>
+    <form id="gateForm">
+      <input type="password" id="token" placeholder="토큰" autocomplete="off" aria-label="접속 토큰">
+      <button type="submit">연결</button>
+    </form>
+  </section>
+
+  <main id="panel" hidden>
+    <section class="frontier">
+      <div class="eyebrow">수집 구간</div>
+      <div class="scale">
+        <b id="oldest">1</b>
+        <span>과거 &larr; 수집 방향 &larr; 최신</span>
+        <b id="newest">—</b>
+      </div>
+      <div class="track">
+        <div class="fill" id="fill"></div>
+      </div>
+      <div class="legend">
+        <span>남은 구간 <em id="remaining">—</em></span>
+        <span class="pct" id="pct">—</span>
+        <span>수집한 이미지 <em id="images">—</em></span>
+      </div>
+    </section>
+
+    <section>
+      <div class="eyebrow">노드</div>
+      <table class="nodes">
+        <thead>
+          <tr>
+            <th>이름</th>
+            <th>역할</th>
+            <th>장치</th>
+            <th>경로</th>
+            <th class="num">동시</th>
+            <th class="num">초당</th>
+            <th class="num">저장</th>
+            <th class="num">실패</th>
+          </tr>
+        </thead>
+        <tbody id="nodeRows"></tbody>
+      </table>
+      <p class="empty" id="noNodes" hidden>등록된 노드가 없습니다.</p>
+    </section>
+
+    <section>
+      <div class="eyebrow">진행</div>
+      <dl class="tiles">
+        <div class="tile"><dt>완료 구간</dt><dd id="rangesDone">—</dd></div>
+        <div class="tile"><dt>처리 중</dt><dd id="rangesActive">—</dd></div>
+        <div class="tile"><dt>실패 구간</dt><dd id="rangesFailed">—</dd></div>
+        <div class="tile"><dt>재시도 대기</dt><dd id="retryQueue">—</dd></div>
+        <div class="tile"><dt>전체 초당</dt><dd id="perSec">—</dd></div>
+      </dl>
+    </section>
+  </main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var KEY = "saucedust.token";
+  var el = function (id) { return document.getElementById(id); };
+  var nf = new Intl.NumberFormat("ko-KR");
+
+  var token = localStorage.getItem(KEY) || "";
+  var lastOK = 0;
+
+  el("gateForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    token = el("token").value.trim();
+    localStorage.setItem(KEY, token);
+    el("gate").hidden = true;
+    poll();
+  });
+
+  function request(path) {
+    var headers = {};
+    if (token) { headers.authorization = "Bearer " + token; }
+    return fetch(path, { headers: headers }).then(function (res) {
+      if (res.status === 401) { throw { unauthorized: true }; }
+      if (!res.ok) { throw new Error(path + " " + res.status); }
+      return res.json();
+    });
+  }
+
+  function beat() {
+    var dot = el("pulse");
+    dot.classList.remove("beat");
+    void dot.offsetWidth;
+    dot.classList.add("beat");
+  }
+
+  function num(v) { return nf.format(v || 0); }
+
+  function renderStats(stats) {
+    el("images").textContent = num(stats.images);
+    el("rangesDone").textContent = num(stats.ranges_done);
+    el("rangesActive").textContent = num(stats.ranges_active);
+
+    var failed = el("rangesFailed");
+    failed.textContent = num(stats.ranges_failed);
+    failed.className = stats.ranges_failed > 0 ? "bad" : "";
+
+    var retry = el("retryQueue");
+    retry.textContent = num(stats.retry_queue);
+    retry.className = stats.retry_queue > 0 ? "warn" : "";
+
+    el("perSec").textContent = (stats.saved_per_sec || 0).toFixed(1);
+
+    el("summary").textContent =
+      stats.online_nodes + "/" + stats.total_nodes + " 노드 · " +
+      (stats.saved_per_sec || 0).toFixed(1) + "/s";
+
+    // 최신 ID가 오른쪽 끝, 1이 왼쪽 끝입니다. 채움은 오른쪽에서 왼쪽으로
+    // 자라며 이미 훑은 구간을 나타냅니다.
+    var newest = stats.high_watermark || 0;
+    var frontier = stats.backfill_before || newest;
+    el("newest").textContent = num(newest);
+
+    var done = newest > 0 ? (newest - frontier) / newest : 0;
+    var pct = Math.max(0, Math.min(1, done)) * 100;
+    el("fill").style.width = pct + "%";
+    el("pct").textContent = pct.toFixed(1) + "% 훑음";
+    el("remaining").textContent = num(Math.max(0, frontier - 1));
+  }
+
+  function orDash(value) {
+    return value && value !== "unknown" ? value : "—";
+  }
+
+  function renderNodes(nodes) {
+    var body = el("nodeRows");
+    body.textContent = "";
+    el("noNodes").hidden = nodes.length > 0;
+
+    nodes.forEach(function (n) {
+      var online = n.status === "online";
+      var row = document.createElement("tr");
+
+      row.appendChild(cell("name" + (online ? "" : " off"), function (td) {
+        var dot = document.createElement("span");
+        dot.className = "state" + (online ? "" : " off");
+        td.appendChild(dot);
+        td.appendChild(document.createTextNode(n.id));
+      }));
+      row.appendChild(text("role head-role", n.role));
+      row.appendChild(label(text("role", orDash(n.device)), "장치"));
+      row.appendChild(label(cell("", function (td) {
+        var mode = n.net_mode || "unknown";
+        var span = document.createElement("span");
+        span.className = "path " + mode;
+        span.textContent = orDash(mode);
+        td.appendChild(span);
+      }), "경로"));
+      row.appendChild(label(text("num", String(n.concurrency)), "동시"));
+      row.appendChild(label(text("num", (n.per_second || 0).toFixed(1)), "초당"));
+      row.appendChild(label(text("num", num(n.saved)), "저장"));
+      row.appendChild(label(text("num", num(n.failed)), "실패"));
+
+      body.appendChild(row);
+    });
+  }
+
+  function cell(cls, build) {
+    var td = document.createElement("td");
+    if (cls) { td.className = cls; }
+    build(td);
+    return td;
+  }
+
+  function text(cls, value) {
+    return cell(cls, function (td) { td.textContent = value; });
+  }
+
+  // 좁은 화면에서 머리글이 사라지면 이 이름표가 대신 붙습니다.
+  function label(td, name) {
+    td.setAttribute("data-label", name);
+    return td;
+  }
+
+  function poll() {
+    Promise.all([request("/v1/stats"), request("/v1/nodes")])
+      .then(function (out) {
+        el("gate").hidden = true;
+        el("panel").hidden = false;
+        el("pulse").classList.remove("stale");
+        renderStats(out[0]);
+        renderNodes(out[1]);
+        beat();
+        lastOK = Date.now();
+      })
+      .catch(function (err) {
+        if (err && err.unauthorized) {
+          el("gate").hidden = false;
+          el("panel").hidden = true;
+          el("summary").textContent = "토큰이 필요합니다";
+          return;
+        }
+        el("pulse").classList.add("stale");
+        if (lastOK === 0) {
+          el("summary").textContent = "중앙 서버에 닿지 못했습니다";
+        } else {
+          el("summary").textContent =
+            Math.round((Date.now() - lastOK) / 1000) + "초째 응답 없음";
+        }
+      });
+  }
+
+  poll();
+  setInterval(poll, 2000);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [".venv"]
+
+[tool.ruff.lint]
+# 기본 검사에 더해 버그를 잘 잡는 규칙들을 켭니다.
+select = [
+    "E", "W",      # 서식
+    "F",           # 미사용 변수와 import
+    "I",           # import 정렬
+    "B",           # 흔한 버그 유형
+    "UP",          # 옛 문법
+    "SIM",         # 불필요하게 복잡한 표현
+    "RUF",         # ruff 고유 규칙
+]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+no_implicit_optional = true
+check_untyped_defs = true
+exclude = ["\\.venv"]
+
+# torch와 transformers는 타입 정보를 다 갖추고 있지 않습니다.
+[[tool.mypy.overrides]]
+module = ["torch.*", "torchvision.*", "transformers.*", "PIL.*"]
+ignore_missing_imports = true

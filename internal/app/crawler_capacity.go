@@ -38,7 +38,14 @@ func (c *Crawler) atCapacity(ctx context.Context) bool {
 	if !ok {
 		return false
 	}
-	if count < c.cfg.MaxIndexed {
+	// 곧 보낼 묶음만큼 여유를 두고 봅니다.
+	//
+	// 적재는 count + 묶음 <= 상한으로 판단합니다. 여기서 count만 보면,
+	// 상한까지 묶음 크기보다 적게 남은 구간에서 수집은 자리가 있다고
+	// 보고 받아 오는데 적재가 거절합니다. 거절되면 count가 안 늘어
+	// 그 상태에서 못 빠져나오고, 같은 구간을 내려받고 버리기를
+	// 되풀이합니다. 두 판단이 같은 여유를 봐야 합니다.
+	if count+int64(c.submitHeadroom()) <= c.cfg.MaxIndexed {
 		// 상한을 올렸거나 지웠으면 다시 알릴 수 있어야 합니다.
 		c.warnedFull.Store(false)
 		return false
@@ -53,6 +60,21 @@ func (c *Crawler) atCapacity(ctx context.Context) bool {
 	}
 	return true
 }
+
+// submitHeadroom은 적재가 한 번에 받을 수 있는 최대 건수입니다.
+func (c *Crawler) submitHeadroom() int {
+	if c.indexer == nil {
+		return 1
+	}
+	if n := c.indexer.SubmitBatch(); n > 0 {
+		return n
+	}
+	return 1
+}
+
+// forgetCount는 기억해 둔 장수를 버립니다.
+// 적재가 찼다고 거절했으면 우리 기억이 낡은 것입니다.
+func (c *Crawler) forgetCount() { c.countedAt.Store(0) }
 
 // indexedCount는 저장소에 든 장수를 냅니다. 잠깐 기억해 두고 씁니다.
 func (c *Crawler) indexedCount(ctx context.Context) (int64, bool) {

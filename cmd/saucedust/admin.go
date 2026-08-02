@@ -534,6 +534,10 @@ func cmdReembed(ctx context.Context, args []string) error {
 		return w.Flush()
 	}
 
+	if err := checkReembedRoom(ctx, rt, models); err != nil {
+		return err
+	}
+
 	index, err := rt.newQdrant()
 	if err != nil {
 		return err

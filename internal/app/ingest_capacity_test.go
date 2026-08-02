@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"saucedust/internal/domain"
@@ -130,5 +131,30 @@ func TestIngestCountsTheIncomingBatch(t *testing.T) {
 	// 딱 맞게 들어가는 것은 받아야 합니다.
 	if err := in.Submit(context.Background(), batch[:1]); err != nil {
 		t.Errorf("한 장이 딱 들어가는데 거절했습니다: %v", err)
+	}
+}
+
+// 워커가 싣는 모델과 중앙에 등록한 모델이 다르면 바로 알려야 합니다.
+//
+// 그냥 넘기면 저장 목록에는 들어가서 외래 키 위반으로 묶음 전체가 죽고,
+// 오류가 일반 500으로만 보여 원인을 찾을 수 없습니다. 빠른 시작 문서가
+// 모델 하나만 등록하게 되어 있어 실제로 밟는 길이었습니다.
+func TestIngestRejectsUnregisteredModel(t *testing.T) {
+	in := newIngestWithLimit(t, 0, nil)
+
+	item := sampleIndexed()
+	item.Vectors = append(item.Vectors, domain.Vector{
+		ModelID: "등록안한모델", Values: make([]float32, 512),
+	})
+
+	err := in.Submit(context.Background(), []domain.IndexedImage{item})
+	if err == nil {
+		t.Fatal("등록하지 않은 모델의 벡터를 받았습니다")
+	}
+	if !errors.Is(err, domain.ErrModelMismatch) {
+		t.Errorf("모델 불일치로 알리지 않습니다: %v", err)
+	}
+	if !strings.Contains(err.Error(), "등록안한모델") {
+		t.Errorf("어느 모델인지 알려 주지 않습니다: %v", err)
 	}
 }

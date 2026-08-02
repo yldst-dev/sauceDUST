@@ -196,7 +196,7 @@ func (c *Crawler) catchupOnce(ctx context.Context) error {
 		return nil
 	}
 
-	report, err := c.index(ctx, posts)
+	report, _, err := c.index(ctx, posts)
 	if err != nil {
 		return err
 	}
@@ -277,17 +277,23 @@ func (c *Crawler) processRange(ctx context.Context, lease *domain.CrawlRange) {
 		return
 	}
 
-	report, err := c.index(ctx, posts)
+	report, trimmed, err := c.index(ctx, posts)
+
+	// 잘라 냈으면 이 구간은 다 한 것이 아닙니다. 오류보다 먼저 봅니다.
+	if trimmed {
+		c.releaseRange(ctx, lease)
+		return
+	}
 	if err != nil {
 		if errors.Is(err, domain.ErrIndexFull) {
+			// 기억해 둔 장수가 낡았습니다. 그대로 두면 곧바로 같은
+			// 구간을 다시 잡아 내려받고 또 버립니다.
+			c.forgetCount()
 			c.releaseRange(ctx, lease)
+			sleepCtx(ctx, fullBackoff)
 			return
 		}
 		c.finishOrRelease(ctx, lease, domain.RangeFailed, report.Saved, err)
-		return
-	}
-	if c.selfStopped() {
-		c.releaseRange(ctx, lease)
 		return
 	}
 
@@ -354,7 +360,7 @@ func (c *Crawler) retryOne(ctx context.Context, item domain.PostRetry) {
 		return
 	}
 
-	report, err := c.index(ctx, []domain.SourcePost{*post})
+	report, _, err := c.index(ctx, []domain.SourcePost{*post})
 	switch {
 	case errors.Is(err, domain.ErrIndexFull):
 		// 색인이 찬 것은 이 게시물의 잘못이 아닙니다. 시도 횟수를
@@ -381,17 +387,23 @@ func (c *Crawler) reschedule(ctx context.Context, item domain.PostRetry, cause e
 	}
 }
 
-func (c *Crawler) index(ctx context.Context, posts []domain.SourcePost) (BatchReport, error) {
-	// 상한이 있으면 남은 만큼만 넘깁니다. 묶음이 끝난 뒤에 세면 한 묶음
-	// 크기만큼 넘칩니다. 구간이 50개면 20을 시켜도 50을 받아 옵니다.
-	// 여기서 자르면 필요 없는 것을 내려받지도 않습니다.
+// index는 묶음을 처리하고, 상한 때문에 잘라 냈는지 함께 알려 줍니다.
+//
+// 잘랐는지를 저장 수로 되짚으면 안 됩니다. 이미 있는 게시물이 섞이면
+// 저장 수가 자른 수보다 적어 남은 몫이 0에 닿지 않고, 처리하지 않은
+// 구간이 완료로 닫힙니다. 20개 구간에서 5개만 보고 닫으면 나머지
+// 15개는 영영 안 모입니다. 두 번 그렇게 틀렸으므로 직접 돌려줍니다.
+func (c *Crawler) index(ctx context.Context, posts []domain.SourcePost) (BatchReport, bool, error) {
+	trimmed := false
 	if left := c.remaining(); left >= 0 && int64(len(posts)) > left {
 		posts = posts[:left]
+		trimmed = true
 	}
 	if len(posts) == 0 {
-		return BatchReport{}, nil
+		return BatchReport{}, trimmed, nil
 	}
-	return c.indexer.IndexBatch(ctx, posts)
+	report, err := c.indexer.IndexBatch(ctx, posts)
+	return report, trimmed, err
 }
 
 // remaining은 상한까지 남은 수입니다. 상한이 없으면 -1입니다.
@@ -529,6 +541,10 @@ func (c *Crawler) finishOrRelease(ctx context.Context, lease *domain.CrawlRange,
 	}
 	c.finish(ctx, lease, status, saved, cause)
 }
+
+// fullBackoff는 색인이 차서 거절당한 뒤 쉬는 시간입니다.
+// 쉬지 않으면 구간 하나를 33분 내려받고 버리기를 끝없이 되풀이합니다.
+const fullBackoff = 30 * time.Second
 
 // cleanupWindow는 끝나는 중에 뒷정리에 쓰는 시간입니다.
 // 취소된 뒤에도 임대를 돌려놓아야 하므로 짧게 따로 잡습니다.

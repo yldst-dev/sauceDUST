@@ -115,13 +115,19 @@ func (in *Ingest) Submit(ctx context.Context, batch []domain.IndexedImage) error
 		payload := payloadFor(batch[i].Image, imageID)
 
 		for _, v := range batch[i].Vectors {
+			model, ok := findModel(in.models, v.ModelID)
+			if !ok {
+				// 등록하지 않은 모델의 벡터입니다. 그냥 넘기면 저장할
+				// 목록에는 들어가서 외래 키 위반으로 묶음 전체가 죽고,
+				// 오류가 일반 500으로만 보여 원인을 못 찾습니다.
+				// 워커가 싣는 모델과 중앙에 등록한 모델이 다른 것입니다.
+				return fmt.Errorf("%w: 모델 %s가 중앙에 등록되어 있지 않습니다."+
+					" saucedust model add로 등록하거나 워커의 models.json에서 빼십시오",
+					domain.ErrModelMismatch, v.ModelID)
+			}
 			stored = append(stored, domain.StoredVector{
 				ImageID: imageID, ModelID: v.ModelID, Values: v.Values,
 			})
-			model, ok := findModel(in.models, v.ModelID)
-			if !ok {
-				continue
-			}
 			byCollection[model.Collection] = append(byCollection[model.Collection],
 				domain.VectorPoint{ImageID: imageID, Vector: v.Values, Payload: payload})
 		}

@@ -314,11 +314,15 @@ func TestFullIndexDoesNotBurnRetries(t *testing.T) {
 
 // -limit에 걸려 잘라 낸 구간을 완료로 적으면 안 됩니다.
 //
-// 처리하지 않은 구간이 끝난 것으로 남으면 그 ID 대역에 구멍이 나고,
-// 나중에 다시 돌려도 채워지지 않습니다.
+// 처리하지 않은 구간이 끝난 것으로 남으면 그 대역에 구멍이 나고, 나중에
+// 다시 돌려도 채워지지 않습니다.
 //
-// 앞서 쓴 시험은 단언이 조건 안에 있어서, 조건에 닿지 않으면 그냥
-// 통과했습니다. 지워도 통과하는 시험이었습니다. 바로 단언합니다.
+// 앞선 시험 두 개가 이것을 놓쳤습니다. 하나는 단언이 조건 안에 있어
+// 닿지 않았고, 다른 하나는 받은 구간이 전부 완료일 때만 봐서 완료와
+// 반납이 섞이면 지나갔습니다. 이번에는 완료가 하나라도 있으면 실패합니다.
+//
+// 이미 있는 게시물을 섞는 것이 핵심입니다. 그러면 저장 수가 자른 수보다
+// 적어 남은 몫이 0에 닿지 않고, 저장 수로 판단하던 코드가 뚫립니다.
 func TestLimitCutDoesNotMarkRangeComplete(t *testing.T) {
 	cfg := baseConfig()
 	cfg.MaxImages = 5
@@ -328,7 +332,10 @@ func TestLimitCutDoesNotMarkRangeComplete(t *testing.T) {
 	source := &rangeSource{latest: 499}
 	source.fakeSource.failURL = map[string]error{}
 
-	crawler, _ := newCrawler(t, cfg, source, lease)
+	crawler, h := newCrawler(t, cfg, source, lease)
+	for _, id := range []int64{480, 481, 482} {
+		h.images.existing[id] = id
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -336,27 +343,58 @@ func TestLimitCutDoesNotMarkRangeComplete(t *testing.T) {
 
 	got := lease.snapshot()
 
-	if crawler.Saved() != cfg.MaxImages {
-		t.Fatalf("%d장에서 멈췄습니다. %d장을 기대했습니다", crawler.Saved(), cfg.MaxImages)
-	}
-
-	// 상한에 걸려 잘라 낸 구간이 하나는 있어야 하고, 그것은 완료가
-	// 아니라 반납이어야 합니다.
-	if len(got.releasedRanges) == 0 {
-		t.Errorf("상한에 걸렸는데 반납한 구간이 없습니다. 완료 %d건, 받은 구간 %d건",
-			len(got.finished), len(got.handedOut))
-	}
-
-	// 받은 구간 수보다 완료로 적힌 것이 적어야 합니다. 같으면 잘라 낸
-	// 것까지 끝났다고 적은 것입니다.
-	completed := 0
-	for _, status := range got.finished {
+	// 20폭 구간을 다 처리한 적이 없으므로 완료가 하나도 없어야 합니다.
+	for i, status := range got.finished {
 		if status == domain.RangeCompleted {
-			completed++
+			t.Errorf("구간 %d개 중 %d번째가 완료로 닫혔습니다. 잘라 낸 것을 다 한 것으로 적었습니다",
+				len(got.handedOut), i+1)
 		}
 	}
-	if completed >= len(got.handedOut) && len(got.handedOut) > 0 {
-		t.Errorf("받은 구간 %d개가 전부 완료로 적혔습니다. 잘라 낸 것이 섞여 있습니다",
-			len(got.handedOut))
+	if len(got.releasedRanges) == 0 {
+		t.Error("잘라 냈는데 반납한 구간이 없습니다")
+	}
+}
+
+// 상한 근처에서 수집과 적재의 판단이 어긋나면 안 됩니다.
+//
+// 수집은 count < 상한으로 보고 적재는 count + 묶음 <= 상한으로 봅니다.
+// 그 사이 구간에서는 수집이 자리가 있다고 보고 받아 오는데 적재가
+// 거절합니다. 거절되면 count가 안 늘어 이 상태에서 못 빠져나옵니다.
+func TestCapacityThresholdsAgree(t *testing.T) {
+	const limit = 1000
+
+	// 적재가 받아 주는 가장 큰 수를 찾습니다.
+	repo := &countingRepo{}
+	in := newIngestWithLimit(t, limit, repo)
+
+	batch := make([]domain.IndexedImage, 32)
+	for i := range batch {
+		item := sampleIndexed()
+		item.Image.SourcePostID = int64(i + 1)
+		batch[i] = item
+	}
+
+	cfg := baseConfig()
+	cfg.MaxIndexed = limit
+	lease := &fakeLease{frontier: 10}
+	source := &rangeSource{latest: 9}
+	source.fakeSource.failURL = map[string]error{}
+	crawler := newCrawlerWithCounter(t, cfg, source, lease, repo)
+
+	for _, count := range []int64{limit - 1, limit - 31, limit - 32, limit - 33} {
+		repo.count.Store(count)
+		crawler.countedAt.Store(0)
+		crawlerSaysFull := crawler.atCapacity(context.Background())
+
+		in.countedAt.Store(0)
+		ingestSaysFull := in.Submit(context.Background(), batch) != nil
+
+		if crawlerSaysFull == ingestSaysFull {
+			continue
+		}
+		if !crawlerSaysFull && ingestSaysFull {
+			t.Errorf("담긴 %d장, 상한 %d에서 수집은 받아 오는데 적재가 거절합니다."+
+				" 이 상태에서는 빠져나갈 수 없습니다", count, limit)
+		}
 	}
 }

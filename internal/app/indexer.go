@@ -49,6 +49,11 @@ type IndexerDeps struct {
 }
 
 // BatchReport는 묶음 하나를 처리한 결과입니다.
+// SubmitBatch는 한 번에 중앙으로 보내는 최대 건수입니다.
+// 수집 쪽이 상한을 볼 때 이만큼 여유를 두어야, 받아 온 묶음이
+// 적재에서 거절당하는 어긋남이 생기지 않습니다.
+func (ix *Indexer) SubmitBatch() int { return ix.cfg.SubmitBatch }
+
 type BatchReport struct {
 	Total    int
 	Saved    int

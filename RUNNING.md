@@ -67,10 +67,16 @@ PostgreSQL과 Qdrant뿐이고, 그쪽은 넣어도 손해가 없습니다. 잰 �
 그다음 저장소를 띄우고 `.env`를 채운 뒤 돌립니다.
 
 ```bash
-docker run -d -p 6333:6333 qdrant/qdrant
+docker run -d -p 127.0.0.1:6333:6333 qdrant/qdrant
 ./saucedust migrate
+
+# 워커가 싣는 모델을 전부 등록해야 합니다. 하나라도 빠지면 적재가
+# 통째로 거절됩니다. 기본 models.json은 둘을 싣습니다.
 ./saucedust model add -id siglip-b16 -kind copy \
   -backend transformers -checkpoint google/siglip-base-patch16-224 -vector-size 768
+./saucedust model add -id clip-b32 -kind semantic \
+  -backend transformers -checkpoint laion/CLIP-ViT-B-32-laion2B-s34B-b79K -vector-size 512
+
 ./saucedust control -limit 20
 ```
 
@@ -896,7 +902,7 @@ go install golang.org/x/vuln/cmd/govulncheck@latest
 ```bash
 psql -d postgres -c "CREATE ROLE sauce LOGIN PASSWORD 'saucepass'"
 psql -d postgres -c "CREATE DATABASE sauce OWNER sauce"
-docker run -d -p 6333:6333 qdrant/qdrant
+docker run -d -p 127.0.0.1:6333:6333 qdrant/qdrant
 ```
 
 그다음 주소를 넣고 돌립니다.

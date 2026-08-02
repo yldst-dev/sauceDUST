@@ -27,6 +27,16 @@ func TestMeasureRealImageSizes(t *testing.T) {
 		t.Skip("바깥 네트워크가 필요합니다. SAUCEDUST_TEST_LIVE=1을 넣으십시오")
 	}
 
+	// 모델 비교에 쓰려면 후보가 많아야 순위가 의미를 갖습니다.
+	want := 60
+	if raw := os.Getenv("SAUCEDUST_TEST_SAMPLE_COUNT"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			want = n
+		}
+	}
+	// 상대 서버에 내는 초당 요청 수입니다. 운영 기본값과 같게 둡니다.
+	const rate = 5.0
+
 	chain, err := netpath.New(netpath.Options{
 		Order:          []domain.NetMode{domain.NetDirect, domain.NetFragment},
 		FragmentParts:  3,
@@ -38,29 +48,25 @@ func TestMeasureRealImageSizes(t *testing.T) {
 
 	client, err := danbooru.New(chain, danbooru.Options{
 		UserAgent:     "saucedust/0.2 (capacity measurement)",
-		RatePerSecond: 3,
-		Burst:         3,
+		RatePerSecond: rate,
+		Burst:         5,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	// 제한 시간은 받을 장수에 맞춰 잡습니다. 고정값으로 두면 그 뒤 요청이
+	// 전부 실패하는데, 겉으로는 상대가 막은 것처럼 보여 진단을 어렵게 합니다.
+	budget := time.Duration(float64(want)/rate*1.5)*time.Second + 2*time.Minute
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
+	t.Logf("최대 %v 동안 초당 %.0f회로 받습니다", budget.Round(time.Second), rate)
 
 	latest, err := client.LatestPostID(ctx)
 	if err != nil {
 		t.Fatalf("최신 게시물 번호를 받지 못했습니다: %v", err)
 	}
 	t.Logf("현재 최신 게시물 번호: %d", latest)
-
-	// 모델 비교에 쓰려면 후보가 많아야 순위가 의미를 갖습니다.
-	want := 60
-	if raw := os.Getenv("SAUCEDUST_TEST_SAMPLE_COUNT"); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-			want = n
-		}
-	}
 
 	// Danbooru는 한 번에 200개까지만 줍니다. 필요한 만큼 넘겨 가며 받습니다.
 	var posts []domain.SourcePost
@@ -90,23 +96,43 @@ func TestMeasureRealImageSizes(t *testing.T) {
 		skipped  int
 		failures int
 	)
+	dumpDir := os.Getenv("SAUCEDUST_TEST_DUMP_DIR")
+	var reused int
+
 	for _, post := range posts {
 		if post.SkipReason() != "" {
 			skipped++
 			continue
 		}
+
+		// 이미 받아 둔 것은 건너뜁니다. 중간에 끊겨도 이어받을 수 있어야
+		// 상대 서버에 같은 요청을 두 번 보내지 않습니다.
+		var target string
+		if dumpDir != "" {
+			target = filepath.Join(dumpDir, fmt.Sprintf("%d.jpg", post.PostID))
+			if info, err := os.Stat(target); err == nil && info.Size() > 0 {
+				sizes = append(sizes, int(info.Size()))
+				total += info.Size()
+				reused++
+				continue
+			}
+		}
+
 		data, err := client.Download(ctx, post.DownloadURL(), 32<<20)
 		if err != nil {
 			failures++
+			if ctx.Err() != nil {
+				t.Logf("시간이 다 되어 멈춥니다. %d장에서 끊겼습니다", len(sizes))
+				break
+			}
 			continue
 		}
 		sizes = append(sizes, len(data))
 		total += int64(len(data))
 
 		// 축소본 크기는 Python 쪽에서 재야 합니다. 받은 이미지를 넘겨 줍니다.
-		if dir := os.Getenv("SAUCEDUST_TEST_DUMP_DIR"); dir != "" {
-			name := filepath.Join(dir, fmt.Sprintf("%d.bin", post.PostID))
-			if err := os.WriteFile(name, data, 0o600); err != nil {
+		if target != "" {
+			if err := os.WriteFile(target, data, 0o600); err != nil {
 				t.Fatalf("이미지를 저장하지 못했습니다: %v", err)
 			}
 		}
@@ -118,7 +144,8 @@ func TestMeasureRealImageSizes(t *testing.T) {
 	sort.Ints(sizes)
 
 	avg := total / int64(len(sizes))
-	t.Logf("잰 이미지 %d장 (건너뜀 %d, 실패 %d)", len(sizes), skipped, failures)
+	t.Logf("잰 이미지 %d장 (새로 받음 %d, 이미 있던 것 %d, 건너뜀 %d, 실패 %d)",
+		len(sizes), len(sizes)-reused, reused, skipped, failures)
 	t.Logf("내려받은 크기: 평균 %d KB, 중앙값 %d KB, 최소 %d KB, 최대 %d KB",
 		avg>>10, int64(sizes[len(sizes)/2])>>10, int64(sizes[0])>>10,
 		int64(sizes[len(sizes)-1])>>10)

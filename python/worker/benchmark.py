@@ -32,6 +32,9 @@ IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 CANDIDATES = [
     {"id": "dinov2-vitb14", "kind": "copy", "backend": "transformers",
      "checkpoint": "facebook/dinov2-base", "vector_size": 768, "input_size": 224},
+    # 같은 계열을 키우면 나아지는지 봅니다. 계산은 세 배쯤 듭니다.
+    {"id": "dinov2-vitl14", "kind": "copy", "backend": "transformers",
+     "checkpoint": "facebook/dinov2-large", "vector_size": 1024, "input_size": 224},
     {"id": "siglip-b16", "kind": "semantic", "backend": "transformers",
      "checkpoint": "google/siglip-base-patch16-224", "vector_size": 768, "input_size": 224},
     {"id": "clip-b32", "kind": "semantic", "backend": "transformers",
@@ -226,8 +229,12 @@ def evaluate_phash(paths: list[Path], queries: list[int]) -> dict[str, Score]:
     return results
 
 
-def print_table(title: str, results: dict[str, Score], elapsed: float) -> None:
-    print(f"\n{title}  ({elapsed:.1f}초)")
+def print_table(title: str, results: dict[str, Score], elapsed: float,
+                encodes: int = 0) -> None:
+    # 처리 속도도 함께 봅니다. 정확도가 조금 나은 대신 세 배 느린 모델은
+    # 수집 시간을 세 배로 늘립니다. 둘을 같이 봐야 고를 수 있습니다.
+    speed = f", {encodes / elapsed:.0f}장/초" if encodes and elapsed > 0 else ""
+    print(f"\n{title}  ({elapsed:.1f}초{speed})")
     print(f"  {'망가뜨린 방식':<14} {'1등':>7} {'5등 안':>8}")
     print("  " + "-" * 32)
 
@@ -277,6 +284,7 @@ def main() -> None:
     print_table("지각 해시만 (기준선)", evaluate_phash(paths, queries),
                 time.time() - started)
 
+    encodes = len(paths) + count * len(DEGRADATIONS)
     for spec in specs:
         started = time.time()
         try:
@@ -284,7 +292,8 @@ def main() -> None:
         except Exception as exc:
             print(f"\n{spec.id}: 측정하지 못했습니다 ({exc})")
             continue
-        print_table(f"{spec.id}  [{spec.checkpoint}]", results, time.time() - started)
+        print_table(f"{spec.id}  [{spec.checkpoint} · {spec.vector_size}차원]",
+                    results, time.time() - started, encodes)
 
     print("\n1등 비율이 가장 높은 모델을 kind=copy로 등록하십시오.")
     print("  saucedust model add -id <이름> -kind copy -vector-size <차원>")

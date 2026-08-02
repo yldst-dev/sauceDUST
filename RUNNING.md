@@ -1,7 +1,7 @@
-# saucedust 실행 안내 (Go 판)
+# saucedust 실행 안내
 
 여러 대의 컴퓨터에서 나눠 돌리는 이미지 역검색 시스템입니다.
-기존 Rust 구현은 `crates/` 아래에 참고용으로 남아 있습니다.
+무엇이 어떻게 생겼고 왜 그렇게 정했는지는 [README.md](README.md)를 보십시오.
 
 ## 구성
 
@@ -269,18 +269,33 @@ Go 시험(race), Python 린트와 타입 검사와 시험을 차례로 돌립니
 
 전부 돌리려면 아래를 준비하십시오.
 
-```bash
-createdb saucedust_test
-docker run -d -p 6333:6333 qdrant/qdrant
+검사 도구를 깝니다.
 
+```bash
 go install honnef.co/go/tools/cmd/staticcheck@latest
 go install github.com/securego/gosec/v2/cmd/gosec@latest
 go install golang.org/x/vuln/cmd/govulncheck@latest
+```
 
-SAUCEDUST_TEST_DATABASE_URL=postgres://localhost/saucedust_test \
+시험용 계정과 저장소를 만듭니다. 계정 없이 주소만 넣으면 연결하지 못하고
+통합 시험이 통째로 실패합니다.
+
+```bash
+psql -d postgres -c "CREATE ROLE sauce LOGIN PASSWORD 'saucepass'"
+psql -d postgres -c "CREATE DATABASE sauce OWNER sauce"
+docker run -d -p 6333:6333 qdrant/qdrant
+```
+
+그다음 주소를 넣고 돌립니다.
+
+```bash
+SAUCEDUST_TEST_DATABASE_URL=postgres://sauce:saucepass@localhost:5432/sauce \
 SAUCEDUST_TEST_QDRANT_URL=http://localhost:6333 \
   ./scripts/verify.sh
 ```
 
 시험은 패키지마다 별도 PostgreSQL 스키마를 씁니다. 병렬로 돌아도 서로의
 표를 지우지 않습니다.
+
+두 줄 다 넣고 돌렸을 때 검사 11개가 모두 통과하고 "건너뜀"이 하나도
+나오지 않아야 합니다.

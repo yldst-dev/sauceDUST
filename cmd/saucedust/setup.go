@@ -76,7 +76,7 @@ func cmdSetup(ctx context.Context, args []string) error {
 	}
 
 	fmt.Println("\n준비를 마쳤습니다. 아래 순서로 띄우십시오.")
-	fmt.Printf("  cd %s && ./.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8100\n", workerDir)
+	fmt.Printf("  %s\n", workerStartCommand(runtime.GOOS, workerDir))
 	fmt.Println("  saucedust worker")
 	return nil
 }
@@ -86,7 +86,7 @@ var requiredTools = []struct {
 	name string
 	hint string
 }{
-	{"psql", "PostgreSQL 클라이언트가 필요합니다. brew install postgresql@16"},
+	{"psql", postgresHint(runtime.GOOS)},
 }
 
 func checkTools() error {
@@ -123,16 +123,16 @@ func findPython(override string) (string, error) {
 		return path, nil
 	}
 
-	for _, name := range []string{"python3.12", "python3.11", "python3.13", "python3"} {
+	for _, name := range pythonCandidates(runtime.GOOS) {
 		if path, err := exec.LookPath(name); err == nil {
 			return path, nil
 		}
 	}
-	return "", errors.New("Python 3.11 이상을 찾지 못했습니다. brew install python@3.12")
+	return "", errors.New(pythonHint(runtime.GOOS))
 }
 
 func ensureVenv(ctx context.Context, python, venv string) error {
-	if _, err := os.Stat(filepath.Join(venv, "bin", "python")); err == nil {
+	if _, err := os.Stat(venvPython(venv)); err == nil {
 		fmt.Println("가상 환경이 이미 있습니다.")
 		return nil
 	}
@@ -141,7 +141,7 @@ func ensureVenv(ctx context.Context, python, venv string) error {
 }
 
 func installRequirements(ctx context.Context, venv, workerDir string) error {
-	pip := filepath.Join(venv, "bin", "pip")
+	pip := venvPip(venv)
 	fmt.Println("의존성을 설치합니다. torch 때문에 몇 분 걸립니다...")
 	return runStep(ctx, workerDir, pip, "install", "-q", "-r", "requirements.txt")
 }
@@ -166,8 +166,7 @@ for spec in config.load().specs:
     AutoModel.from_pretrained(spec.checkpoint)
 print("모델을 모두 받았습니다.")
 `
-	python := filepath.Join(venv, "bin", "python")
-	return runStep(ctx, workerDir, python, "-c", script)
+	return runStep(ctx, workerDir, venvPython(venv), "-c", script)
 }
 
 // workerLayouts는 임베딩 워커가 놓일 수 있는 자리입니다.
@@ -316,7 +315,7 @@ func cmdDoctor(ctx context.Context, args []string) error {
 	if workerDir, err := findWorkerDir(root); err != nil {
 		note("워커 폴더", "없음", err.Error(), true)
 	} else {
-		venv := filepath.Join(workerDir, ".venv", "bin", "python")
+		venv := venvPython(filepath.Join(workerDir, ".venv"))
 		if _, err := os.Stat(venv); err != nil {
 			note("가상 환경", "없음", "saucedust setup으로 만드십시오", true)
 		} else {

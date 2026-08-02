@@ -16,6 +16,8 @@ TARGETS=(
   "darwin/amd64"
   "linux/amd64"
   "linux/arm64"
+  "windows/amd64"
+  "windows/arm64"
 )
 
 rm -rf "$OUT"
@@ -28,6 +30,7 @@ for target in "${TARGETS[@]}"; do
   os="${target%/*}"
   arch="${target#*/}"
   name="saucedust-$os-$arch"
+  [ "$os" = "windows" ] && name="$name.exe"
 
   # CGO를 끄면 어느 배포판에도 그대로 올라가는 정적 바이너리가 나옵니다.
   # 라이브러리 버전이 달라 실행이 안 되는 일이 없습니다.
@@ -46,8 +49,11 @@ echo
 echo "$OUT 에 만들었습니다. 노드에는 파일 하나만 올리면 됩니다."
 echo
 echo "노드에 올리는 방법"
-echo "  scp $OUT/saucedust-linux-amd64 node:/usr/local/bin/saucedust"
-echo "  ssh node 'mkdir -p ~/saucedust && cd ~/saucedust && saucedust setup'"
+echo "  리눅스   scp $OUT/saucedust-linux-amd64 node:/usr/local/bin/saucedust"
+echo "           ssh node 'mkdir -p ~/saucedust && cd ~/saucedust && saucedust setup'"
+echo "  macOS    같습니다. saucedust-darwin-arm64 또는 -amd64를 쓰십시오"
+echo "  Windows  saucedust-windows-amd64.exe를 빈 폴더에 두고 그 폴더에서"
+echo "           saucedust-windows-amd64.exe setup 을 실행하십시오"
 echo
 echo "setup이 하는 일"
 echo "  .env와 Python 워커를 풀어 놓습니다 (실행 파일 안에 들어 있습니다)"

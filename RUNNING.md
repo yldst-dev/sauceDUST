@@ -22,9 +22,154 @@ worker C ─┘      ↑
                  └─ 구간 임대 (worker들이 직접 조회)
 ```
 
-## 준비
+## 컴퓨터 한 대에서 써 보기
 
-새 노드에서는 이것만 하면 됩니다.
+어느 운영체제든 순서는 같습니다. **실행 파일 하나를 빈 폴더에 두고 `setup`을
+부르면 나머지를 스스로 갖춥니다.**
+
+미리 있어야 하는 것은 두 가지뿐입니다.
+
+| | Python 3.11 이상 | PostgreSQL 클라이언트 |
+|---|---|---|
+| **Windows** | `winget install Python.Python.3.12` | `winget install PostgreSQL.PostgreSQL` |
+| **macOS** | `brew install python@3.12` | `brew install postgresql@16` |
+| **Linux** | `apt install python3.12-venv` | `apt install postgresql-client` |
+
+없으면 `setup`이 그 운영체제에 맞는 명령을 알려 주고 멈춥니다.
+
+### Windows
+
+`dist\saucedust-windows-amd64.exe`를 빈 폴더에 두고 그 폴더에서 명령 프롬프트를
+엽니다.
+
+```
+saucedust-windows-amd64.exe setup
+saucedust-windows-amd64.exe doctor
+```
+
+### macOS와 Linux
+
+```bash
+chmod +x saucedust
+./saucedust setup
+./saucedust doctor
+```
+
+`setup`은 실행 파일 안에서 Python 워커와 `.env`를 풀어 놓고, 가상 환경을 만들고,
+torch와 모델 가중치를 받습니다. 처음 한 번만 몇 분 걸립니다.
+`doctor`는 확인만 하고 아무것도 바꾸지 않습니다.
+
+그다음 저장소를 띄우고 `.env`를 채운 뒤 돌립니다.
+
+```bash
+docker run -d -p 6333:6333 qdrant/qdrant
+./saucedust migrate
+./saucedust model add -id siglip-b16 -kind copy \
+  -backend transformers -checkpoint google/siglip-base-patch16-224 -vector-size 768
+./saucedust control -limit 20
+```
+
+`-limit 20`은 스무 장만 모으고 멈춥니다. 처음에는 이렇게 확인하십시오.
+
+Windows에서는 `./saucedust` 대신 `saucedust-windows-amd64.exe`로 읽으십시오.
+나머지는 같습니다.
+
+## 여러 대에서 중앙으로 모으기
+
+컴퓨터를 늘리는 이유는 **Danbooru가 IP 단위로 속도를 제한하기 때문**입니다.
+한 대에서 더 세게 밀어도 소용이 없고, 대수를 늘려야 빨라집니다.
+
+역할을 나눕니다.
+
+```
+작업 노드 A ─┐
+작업 노드 B ─┼─ HTTP ─→ 중앙 노드 ─→ PostgreSQL + Qdrant + 축소본
+작업 노드 C ─┘              ↑
+                            └─ 구간 임대 (작업 노드가 직접 조회)
+```
+
+**중앙 노드는 한 대**입니다. PostgreSQL, Qdrant, 축소본을 모두 가집니다.
+작업 노드는 수집과 계산만 하고 결과를 HTTP로 보냅니다. 이미지도 축소본도
+작업 노드에는 남지 않습니다.
+
+### 중앙 컴퓨터에서
+
+PostgreSQL과 Qdrant를 다른 컴퓨터에서도 닿을 수 있게 열어 둡니다.
+
+```bash
+# .env
+SAUCEDUST_NODE_ID=central
+SAUCEDUST_NODE_ROLE=control
+DATABASE_URL=postgres://sauce:비밀번호@0.0.0.0:5432/sauce
+QDRANT_URL=http://localhost:6333
+SAUCEDUST_CONTROL_BIND=0.0.0.0:8000
+SAUCEDUST_CONTROL_TOKEN=길고-무작위인-문자열
+```
+
+```bash
+./saucedust migrate
+./saucedust model add ...        # 모델 등록은 중앙에서 한 번만
+./saucedust control -no-crawl    # 받기만 하고 수집은 작업 노드에 맡깁니다
+```
+
+`-no-crawl`을 빼면 중앙도 함께 수집합니다. 중앙 컴퓨터가 넉넉하면 그렇게 하십시오.
+
+### 각 작업 컴퓨터에서
+
+```bash
+# .env
+SAUCEDUST_NODE_ID=worker-1          # 노드마다 다르게
+SAUCEDUST_NODE_ROLE=worker
+DATABASE_URL=postgres://sauce:비밀번호@중앙주소:5432/sauce
+SAUCEDUST_CONTROL_URL=http://중앙주소:8000
+SAUCEDUST_CONTROL_TOKEN=길고-무작위인-문자열
+```
+
+```bash
+./saucedust setup
+./saucedust worker -limit 20    # 먼저 스무 장으로 확인
+./saucedust worker              # 확인됐으면 그냥 돌립니다
+```
+
+**챙길 것 세 가지입니다.**
+
+- `SAUCEDUST_NODE_ID`는 노드마다 달라야 합니다. 같으면 서로를 덮어씁니다.
+- `SAUCEDUST_CONTROL_TOKEN`은 모든 노드가 **같은 값**이어야 합니다.
+- 모델은 중앙에서 한 번만 등록합니다. 작업 노드는 시작할 때 자기 워커가 올린
+  모델을 그 기준과 대조하고, 다르면 아예 일을 받지 않습니다. 노드마다 다른
+  모델을 쓰면 벡터를 비교할 수 없는데, 그건 오류 없이 검색 결과만 조용히
+  이상해지는 형태라 미리 막습니다.
+
+작업 노드가 PostgreSQL에도 붙는 이유는 구간을 빌리기 위해서입니다. 어느 ID
+대역을 누가 맡을지 정하는 데만 씁니다. 이미지와 벡터는 HTTP로 갑니다.
+
+### 잘 되고 있는지 보기
+
+```bash
+./saucedust node ls    # 어느 노드가 살아 있고 얼마나 처리하는지
+./saucedust stats      # 얼마나 쌓였는지
+```
+
+중앙 노드의 `SAUCEDUST_CONTROL_BIND` 주소를 브라우저로 열면 대시보드가 나옵니다.
+
+노드가 죽으면 30초마다 오던 신호가 끊기고, 90초 뒤 중앙이 그 노드의 구간을
+회수해 다른 노드가 이어받습니다. 하던 일은 사라지지 않습니다.
+
+### 실측으로 확인한 것
+
+같은 컴퓨터에서 폴더를 나눠 중앙과 작업 노드를 따로 띄워 봤습니다.
+2026년 8월 2일 측정입니다.
+
+| 확인한 것 | 결과 |
+|---|---|
+| 작업 노드가 20장 수집 | 4.9초 |
+| 중앙의 PostgreSQL | 이미지 20행, 모델별 벡터 20개씩 |
+| 중앙의 Qdrant | 컬렉션마다 20점 |
+| 중앙의 축소본 | 20장 |
+| **작업 노드에 남은 이미지** | **0장** |
+| 중앙에서 검색 | 망가뜨린 사본 10건 모두 1등 정답 |
+
+## 준비 (저장소에서 직접 빌드할 때)
 
 ```bash
 go build -o saucedust ./cmd/saucedust

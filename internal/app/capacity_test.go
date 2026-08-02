@@ -316,9 +316,13 @@ func TestFullIndexDoesNotBurnRetries(t *testing.T) {
 //
 // 처리하지 않은 구간이 끝난 것으로 남으면 그 ID 대역에 구멍이 나고,
 // 나중에 다시 돌려도 채워지지 않습니다.
+//
+// 앞서 쓴 시험은 단언이 조건 안에 있어서, 조건에 닿지 않으면 그냥
+// 통과했습니다. 지워도 통과하는 시험이었습니다. 바로 단언합니다.
 func TestLimitCutDoesNotMarkRangeComplete(t *testing.T) {
 	cfg := baseConfig()
 	cfg.MaxImages = 5
+	cfg.BaseRangeSize = 20
 
 	lease := &fakeLease{frontier: 500}
 	source := &rangeSource{latest: 499}
@@ -326,18 +330,33 @@ func TestLimitCutDoesNotMarkRangeComplete(t *testing.T) {
 
 	crawler, _ := newCrawler(t, cfg, source, lease)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	crawler.Run(ctx)
 
 	got := lease.snapshot()
+
+	if crawler.Saved() != cfg.MaxImages {
+		t.Fatalf("%d장에서 멈췄습니다. %d장을 기대했습니다", crawler.Saved(), cfg.MaxImages)
+	}
+
+	// 상한에 걸려 잘라 낸 구간이 하나는 있어야 하고, 그것은 완료가
+	// 아니라 반납이어야 합니다.
+	if len(got.releasedRanges) == 0 {
+		t.Errorf("상한에 걸렸는데 반납한 구간이 없습니다. 완료 %d건, 받은 구간 %d건",
+			len(got.finished), len(got.handedOut))
+	}
+
+	// 받은 구간 수보다 완료로 적힌 것이 적어야 합니다. 같으면 잘라 낸
+	// 것까지 끝났다고 적은 것입니다.
+	completed := 0
 	for _, status := range got.finished {
-		if status == domain.RangeCompleted && crawler.Saved() >= cfg.MaxImages {
-			// 상한에 걸린 뒤 완료로 적힌 구간이 있는지 봅니다.
-			if len(got.releasedRanges) == 0 {
-				t.Error("상한에 걸렸는데 반납한 구간이 없습니다")
-			}
-			return
+		if status == domain.RangeCompleted {
+			completed++
 		}
+	}
+	if completed >= len(got.handedOut) && len(got.handedOut) > 0 {
+		t.Errorf("받은 구간 %d개가 전부 완료로 적혔습니다. 잘라 낸 것이 섞여 있습니다",
+			len(got.handedOut))
 	}
 }

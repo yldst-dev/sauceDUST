@@ -269,11 +269,11 @@ func (c *Crawler) processRange(ctx context.Context, lease *domain.CrawlRange) {
 
 	posts, err := c.source.PostsInRange(ctx, lease.LowerID, lease.UpperID, c.cfg.Tags)
 	if err != nil {
-		c.finish(ctx, lease, domain.RangeFailed, 0, err)
+		c.finishOrRelease(ctx, lease, domain.RangeFailed, 0, err)
 		return
 	}
 	if len(posts) == 0 {
-		c.finish(ctx, lease, domain.RangeEmpty, 0, nil)
+		c.finishOrRelease(ctx, lease, domain.RangeEmpty, 0, nil)
 		return
 	}
 
@@ -283,13 +283,10 @@ func (c *Crawler) processRange(ctx context.Context, lease *domain.CrawlRange) {
 			c.releaseRange(ctx, lease)
 			return
 		}
-		c.finish(ctx, lease, domain.RangeFailed, report.Saved, err)
+		c.finishOrRelease(ctx, lease, domain.RangeFailed, report.Saved, err)
 		return
 	}
-
-	// MaxImages에 걸려 잘라 낸 것은 다 한 것이 아닙니다. 완료로 적으면
-	// 처리하지 않은 구간이 끝난 것으로 남아 그 대역에 구멍이 납니다.
-	if c.remaining() == 0 {
+	if c.selfStopped() {
 		c.releaseRange(ctx, lease)
 		return
 	}
@@ -301,7 +298,7 @@ func (c *Crawler) processRange(ctx context.Context, lease *domain.CrawlRange) {
 	if len(report.Failed) > 0 {
 		status = domain.RangeFailed
 	}
-	c.finish(ctx, lease, status, report.Saved, nil)
+	c.finishOrRelease(ctx, lease, status, report.Saved, nil)
 }
 
 func (c *Crawler) finish(ctx context.Context, lease *domain.CrawlRange, status domain.RangeStatus, saved int, cause error) {
@@ -485,12 +482,16 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-// releaseRange는 색인이 차서 못 넣은 구간을 시도 횟수 없이 돌려놓습니다.
-func (c *Crawler) releaseRange(ctx context.Context, lease *domain.CrawlRange) {
-	if ctx.Err() != nil {
-		return
-	}
-	if err := c.lease.ReleaseRange(ctx, lease); err != nil && ctx.Err() == nil {
+// releaseRange는 못 넣은 구간을 시도 횟수 없이 돌려놓습니다.
+//
+// 끝나는 중에도 반납해야 합니다. MaxImages에 닿으면 그 자리에서 취소가
+// 걸리는데, 취소됐다고 그냥 나가면 구간이 running으로 버려져 임대가
+// 만료될 때까지 아무도 못 잡습니다. 정리는 취소와 무관하게 합니다.
+func (c *Crawler) releaseRange(parent context.Context, lease *domain.CrawlRange) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), cleanupWindow)
+	defer cancel()
+
+	if err := c.lease.ReleaseRange(ctx, lease); err != nil {
 		if errors.Is(err, domain.ErrLeaseConflict) {
 			return
 		}
@@ -498,15 +499,40 @@ func (c *Crawler) releaseRange(ctx context.Context, lease *domain.CrawlRange) {
 	}
 }
 
-// releaseRetry는 색인이 차서 못 넣은 재시도를 시도 횟수 없이 돌려놓습니다.
-func (c *Crawler) releaseRetry(ctx context.Context, item domain.PostRetry) {
-	if ctx.Err() != nil {
-		return
-	}
-	if err := c.lease.ReleaseRetry(ctx, item); err != nil && ctx.Err() == nil {
+// releaseRetry는 못 넣은 재시도를 시도 횟수 없이 돌려놓습니다.
+// releaseRange와 같은 이유로 취소와 무관하게 정리합니다.
+func (c *Crawler) releaseRetry(parent context.Context, item domain.PostRetry) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), cleanupWindow)
+	defer cancel()
+
+	if err := c.lease.ReleaseRetry(ctx, item); err != nil {
 		c.log.Warn("재시도 반납 실패", slog.String("error", err.Error()))
 	}
 }
+
+// selfStopped는 우리가 스스로 멈췄는지 봅니다.
+//
+// MaxImages에 닿으면 그 자리에서 취소가 걸리는데, 이때 다른 작업자가
+// 하던 구간은 취소 오류로 끝납니다. 그것을 실패로 적으면 시도 횟수를
+// 깎고, 취소 때문에 finish가 그냥 나가면 running으로 버려집니다.
+// 어느 쪽이든 그 구간이 손해를 봅니다. 우리 사정이므로 반납해야 합니다.
+func (c *Crawler) selfStopped() bool {
+	return c.cfg.MaxImages > 0 && c.remaining() == 0
+}
+
+// finishOrRelease는 우리가 멈춘 것이면 반납하고, 아니면 결과를 적습니다.
+func (c *Crawler) finishOrRelease(ctx context.Context, lease *domain.CrawlRange,
+	status domain.RangeStatus, saved int, cause error) {
+	if c.selfStopped() {
+		c.releaseRange(ctx, lease)
+		return
+	}
+	c.finish(ctx, lease, status, saved, cause)
+}
+
+// cleanupWindow는 끝나는 중에 뒷정리에 쓰는 시간입니다.
+// 취소된 뒤에도 임대를 돌려놓아야 하므로 짧게 따로 잡습니다.
+const cleanupWindow = 5 * time.Second
 
 // throughputDecayAt은 이만큼 쌓이면 절반으로 줄여 최근 것에 무게를 줍니다.
 const throughputDecayAt = 10_000

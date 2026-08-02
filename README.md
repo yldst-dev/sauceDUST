@@ -292,6 +292,30 @@ ruff, mypy, Python 시험을 차례로 돌립니다. 저장소나 컨테이너�
 macOS와 리눅스, arm64와 amd64 네 가지가 나옵니다. C 의존성을 끄고 만들므로
 어느 배포판에나 그대로 올라갑니다.
 
+## 나르는 것은 파일 하나입니다
+
+실행 파일 안에 Python 워커 소스와 설정 본보기, 데이터베이스 스키마,
+웹 대시보드가 모두 들어 있습니다. 11에서 12메가바이트입니다.
+
+```bash
+scp dist/saucedust-linux-amd64 node:/usr/local/bin/saucedust
+ssh node 'mkdir -p ~/saucedust && cd ~/saucedust && saucedust setup'
+```
+
+`setup`이 실행 파일에서 워커를 풀어 놓고, 가상 환경을 만들고, torch와 모델
+가중치를 받습니다. 노드에 미리 있어야 하는 것은 Python 3.11 이상과 `psql`
+두 가지뿐입니다.
+
+torch(약 3GB)와 모델 가중치(약 1.5GB)는 넣지 않았습니다. CPU 종류와 CUDA
+판마다 받는 것이 다르고, 모델을 바꾸면 가중치도 달라지기 때문입니다.
+노드가 인터넷에서 직접 받습니다.
+
+Python 의존성은 판을 못 박아 뒀습니다. 고정하지 않으면 어제 세운 노드와
+오늘 세운 노드가 다르게 동작합니다. 실제로 transformers 5.14에서
+`get_image_features`의 반환 형식이 바뀌어 semantic 모델이 통째로 죽은 적이
+있습니다. 모델을 올릴 때는 멀쩡하고 이미지를 넣는 순간에야 터지는 형태라
+알아채기 어려웠습니다.
+
 ## 지금 규모
 
 | | 본문 | 시험 |

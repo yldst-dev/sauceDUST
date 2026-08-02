@@ -14,13 +14,9 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"saucedust"
 	"saucedust/internal/config"
 )
-
-// setupAssets는 워커 실행에 필요한 파일을 바이너리 안에 넣어 둡니다.
-// 노드에 바이너리 하나만 올리면 Python 쪽까지 갖춰집니다.
-//
-//go:generate echo "python/worker 아래 파일은 build 태그 없이 embed됩니다"
 
 // cmdSetup은 새 노드를 쓸 수 있는 상태로 만듭니다.
 //
@@ -55,7 +51,7 @@ func cmdSetup(ctx context.Context, args []string) error {
 		return nil
 	}
 
-	workerDir, err := findWorkerDir(root)
+	workerDir, err := ensureWorkerDir(root)
 	if err != nil {
 		return err
 	}
@@ -196,6 +192,42 @@ func findWorkerDir(root string) (string, error) {
 	}
 	return "", fmt.Errorf("워커 폴더를 찾지 못했습니다. 다음을 찾아봤습니다:\n  %s",
 		strings.Join(tried, "\n  "))
+}
+
+// ensureWorkerDir는 워커 소스를 준비합니다.
+//
+// 없으면 실행 파일 안에 넣어 둔 것을 풀어 씁니다. 노드에는 실행 파일 하나만
+// 올리면 되고, 워커를 따로 복사할 필요가 없습니다. 판이 어긋날 일도 없습니다.
+//
+// 이미 있으면 건드리지 않습니다. 저장소에서 개발할 때 고친 것을 덮어쓰면
+// 안 되기 때문입니다.
+func ensureWorkerDir(root string) (string, error) {
+	if dir, err := findWorkerDir(root); err == nil {
+		return dir, nil
+	}
+
+	files, err := saucedust.WorkerFiles()
+	if err != nil {
+		return "", fmt.Errorf("실행 파일에 넣어 둔 워커를 읽지 못했습니다: %w", err)
+	}
+	if len(files) == 0 {
+		return "", errors.New("실행 파일에 워커가 들어 있지 않습니다")
+	}
+
+	dir := filepath.Join(root, "worker")
+	fmt.Printf("\n워커를 풀어 놓습니다: %s (%d개 파일)\n", dir, len(files))
+
+	for rel, data := range files {
+		// 경로는 실행 파일 안에 박혀 있어 바깥 입력이 닿지 않습니다.
+		target := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(target, data, 0o600); err != nil { // #nosec G703 -- 작업 폴더 기준 고정 경로입니다
+			return "", fmt.Errorf("%s를 쓰지 못했습니다: %w", rel, err)
+		}
+	}
+	return dir, nil
 }
 
 func ensureEnvFile(root string) error {

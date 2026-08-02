@@ -40,18 +40,16 @@ for target in "${TARGETS[@]}"; do
   printf "  %-26s %s\n" "$name" "$size"
 done
 
-# Python 워커는 노드마다 필요합니다. 함께 묶어 둡니다.
-mkdir -p "$OUT/worker"
-cp -R python/worker/domain "$OUT/worker/"
-cp python/worker/*.py python/worker/*.json python/worker/requirements.txt "$OUT/worker/"
-rm -rf "$OUT/worker/domain/__pycache__" "$OUT/worker/conftest.py"
-
-cp internal/config/env.example "$OUT/env.example"
-
+# Python 워커와 설정 본보기는 실행 파일 안에 들어 있습니다.
+# setup이 알아서 풀어 놓으므로 따로 나르지 않습니다.
 echo
-echo "$OUT 에 만들었습니다."
+echo "$OUT 에 만들었습니다. 노드에는 파일 하나만 올리면 됩니다."
 echo
 echo "노드에 올리는 방법"
 echo "  scp $OUT/saucedust-linux-amd64 node:/usr/local/bin/saucedust"
-echo "  scp -r $OUT/worker $OUT/env.example node:~/saucedust/"
-echo "  ssh node 'cd ~/saucedust && saucedust setup'"
+echo "  ssh node 'mkdir -p ~/saucedust && cd ~/saucedust && saucedust setup'"
+echo
+echo "setup이 하는 일"
+echo "  .env와 Python 워커를 풀어 놓습니다 (실행 파일 안에 들어 있습니다)"
+echo "  가상 환경을 만들고 torch를 깝니다 (약 3기가바이트)"
+echo "  모델 가중치를 미리 받습니다 (약 1.5기가바이트)"

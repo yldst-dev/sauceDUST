@@ -32,13 +32,36 @@ go build -o saucedust ./cmd/saucedust
 ./saucedust doctor    # 준비 상태만 확인합니다. 아무것도 바꾸지 않습니다
 ```
 
-여러 노드에 배포할 바이너리를 한 번에 뽑으려면:
+## 노드에 배포하기
+
+노드에는 **실행 파일 하나만** 올리면 됩니다.
 
 ```bash
 ./scripts/build_nodes.sh
+scp dist/saucedust-linux-amd64 node:/usr/local/bin/saucedust
+ssh node 'mkdir -p ~/saucedust && cd ~/saucedust && saucedust setup'
 ```
 
 macOS와 리눅스, arm64와 amd64용 정적 바이너리가 `dist/`에 나옵니다.
+각각 11에서 12메가바이트이고, 안에 이런 것이 들어 있습니다.
+
+- Python 워커 소스 전부
+- 설정 본보기
+- 데이터베이스 스키마
+- 웹 대시보드
+
+`setup`이 실행 파일에서 이것들을 풀어 놓고, 이어서 아래를 준비합니다.
+
+| 단계 | 크기 | 왜 실행 파일에 못 넣는지 |
+|---|---|---|
+| Python 가상 환경 | — | Python 자체는 노드에 깔려 있어야 합니다 |
+| torch와 의존성 | 약 3GB | CPU 종류와 CUDA 판마다 다른 것을 받습니다 |
+| 모델 가중치 | 약 1.5GB | 모델을 바꾸면 달라지므로 설정을 보고 받습니다 |
+
+즉 **나르는 것은 파일 하나**이고, 나머지 4.5기가바이트는 노드가 인터넷에서
+직접 받습니다. 노드마다 같은 것을 scp로 밀어 넣지 않아도 됩니다.
+
+노드에 미리 필요한 것은 Python 3.11 이상과 `psql` 두 가지뿐입니다.
 
 `.env`를 열어 최소한 아래 값을 채우십시오.
 

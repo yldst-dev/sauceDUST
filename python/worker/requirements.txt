@@ -1,9 +1,20 @@
-anyio
-fastapi
-numpy
-pillow
-python-multipart
-torch
-torchvision
-transformers
-uvicorn[standard]
+# 판을 고정합니다.
+#
+# 고정하지 않으면 노드마다 다른 판이 깔려, 어제 세운 노드와 오늘 세운 노드가
+# 다르게 동작합니다. 실제로 transformers 5.14에서 get_image_features가
+# 텐서 대신 감싼 객체를 돌려주도록 바뀌어 semantic 모델이 통째로 죽었습니다.
+# 모델을 올릴 때는 멀쩡하고 이미지를 넣는 순간에야 터지는 형태였습니다.
+#
+# 올릴 때는 아래를 먼저 돌려 실제 모델이 기대한 차원을 내는지 확인하십시오.
+#
+#     SAUCEDUST_TEST_MODELS=1 .venv/bin/python -m pytest tests/test_backends.py
+
+anyio==4.14.2
+fastapi==0.141.1
+numpy==2.5.1
+pillow==12.3.0
+python-multipart==0.0.32
+torch==2.13.0
+torchvision==0.28.0
+transformers==5.14.1
+uvicorn[standard]==0.52.1

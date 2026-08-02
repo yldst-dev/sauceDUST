@@ -33,7 +33,8 @@ need() { command -v "$1" >/dev/null 2>&1; }
 
 check_fmt() {
   local out
-  out=$(gofmt -l ./cmd ./internal)
+  # 뿌리에도 Go 파일이 있습니다. 워커를 실행 파일에 넣는 embed 패키지입니다.
+  out=$(gofmt -l ./cmd ./internal ./*.go)
   if [ -n "$out" ]; then
     echo "서식이 어긋난 파일:"
     echo "$out"

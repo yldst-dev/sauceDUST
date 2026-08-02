@@ -1,8 +1,12 @@
 package httpapi
 
 import (
+	"errors"
+	"net/http"
 	"strings"
 	"testing"
+
+	"saucedust/internal/domain"
 )
 
 // 토큰이 비어 있으면 authed는 아무것도 검사하지 않습니다.
@@ -99,5 +103,33 @@ func TestNewRefusesExposedBindWithoutToken(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "SAUCEDUST_CONTROL_TOKEN") {
 		t.Errorf("막은 이유가 다릅니다: %v", err)
+	}
+}
+
+// 색인이 차면 다시 보내도 소용없습니다. 500번대로 내면 보낸 쪽이
+// 끝없이 다시 보냅니다. 507은 재시도하지 않는 쪽으로 갈라집니다.
+func TestFullIndexIsNotRetryable(t *testing.T) {
+	retry, err := classifyIngestStatus(http.StatusInsufficientStorage, "찼습니다")
+	if retry {
+		t.Error("507을 재시도 대상으로 봤습니다")
+	}
+	if !errors.Is(err, domain.ErrIndexFull) {
+		t.Errorf("찼다는 것을 알아보지 못했습니다: %v", err)
+	}
+
+	// 다른 500번대는 그대로 재시도해야 합니다. 잠깐 흔들린 것일 수 있습니다.
+	if retry, _ := classifyIngestStatus(http.StatusBadGateway, "502"); !retry {
+		t.Error("502를 재시도하지 않습니다")
+	}
+	if retry, _ := classifyIngestStatus(http.StatusInternalServerError, "500"); !retry {
+		t.Error("500을 재시도하지 않습니다")
+	}
+
+	// 모델 불일치와 인증 실패는 원래대로 멈춰야 합니다.
+	if retry, _ := classifyIngestStatus(http.StatusConflict, "다름"); retry {
+		t.Error("409를 재시도합니다")
+	}
+	if retry, _ := classifyIngestStatus(http.StatusUnauthorized, "토큰"); retry {
+		t.Error("401을 재시도합니다")
 	}
 }

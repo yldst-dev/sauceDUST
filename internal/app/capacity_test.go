@@ -216,3 +216,71 @@ func newCrawlerWithCounter(t *testing.T, cfg CrawlerConfig, source SourceClient,
 	}
 	return crawler
 }
+
+// 색인이 차도 크롤러가 반환하면 안 됩니다.
+//
+// 중앙 노드는 같은 프로세스에서 검색과 대시보드를 함께 맡습니다. runAll은
+// 작업 하나가 반환하면 오류가 없어도 공용 취소를 걸어 나머지를 전부
+// 내립니다. 그래서 "색인이 찼다"가 "검색이 죽었다"가 되어 버립니다.
+func TestFullCrawlerKeepsRunning(t *testing.T) {
+	repo := &countingRepo{}
+	repo.count.Store(500)
+
+	cfg := baseConfig()
+	cfg.MaxIndexed = 500
+
+	lease := &fakeLease{frontier: 5000}
+	source := &rangeSource{latest: 4999}
+	source.fakeSource.failURL = map[string]error{}
+
+	crawler := newCrawlerWithCounter(t, cfg, source, lease, repo)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		crawler.Run(ctx)
+		close(done)
+	}()
+
+	// 찬 상태에서도 바깥이 끝날 때까지 살아 있어야 합니다.
+	select {
+	case <-done:
+		if ctx.Err() == nil {
+			t.Fatal("색인이 찼다고 크롤러가 스스로 끝냈습니다. 검색까지 같이 내려갑니다")
+		}
+	case <-ctx.Done():
+		<-done
+	}
+
+	if got := lease.snapshot(); len(got.handedOut) != 0 {
+		t.Errorf("찬 상태인데 구간을 %d개 받았습니다", len(got.handedOut))
+	}
+}
+
+// 상한을 올리면 다시 띄우지 않고도 이어서 돌아야 합니다.
+func TestCrawlerResumesWhenRoomAppears(t *testing.T) {
+	repo := &countingRepo{}
+	repo.count.Store(500)
+
+	cfg := baseConfig()
+	cfg.MaxIndexed = 500
+
+	lease := &fakeLease{frontier: 5000}
+	source := &rangeSource{latest: 4999}
+	source.fakeSource.failURL = map[string]error{}
+
+	crawler := newCrawlerWithCounter(t, cfg, source, lease, repo)
+	if !crawler.atCapacity(context.Background()) {
+		t.Fatal("찬 상태를 알아보지 못했습니다")
+	}
+
+	// 자리가 생기면 다시 받아야 합니다. 기억해 둔 값은 지웁니다.
+	repo.count.Store(10)
+	crawler.countedAt.Store(0)
+
+	if crawler.atCapacity(context.Background()) {
+		t.Error("여유가 생겼는데 계속 찼다고 합니다")
+	}
+}

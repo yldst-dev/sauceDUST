@@ -67,10 +67,10 @@ type Crawler struct {
 	saved atomic.Int64
 	stop  context.CancelFunc
 
-	counter   IndexCounter
-	full      atomic.Bool
-	lastCount atomic.Int64
-	countedAt atomic.Int64
+	counter    IndexCounter
+	warnedFull atomic.Bool
+	lastCount  atomic.Int64
+	countedAt  atomic.Int64
 }
 
 // IndexCounter는 저장소에 지금 몇 장 들어 있는지 셉니다.
@@ -119,16 +119,14 @@ func (c *Crawler) Run(ctx context.Context) error {
 
 	// 상한이 있으면 다 채웠을 때 스스로 멈춥니다.
 	// 작업자들이 같은 신호를 보도록 여기서 한 번만 감쌉니다.
-	if c.cfg.MaxImages > 0 || c.cfg.MaxIndexed > 0 {
+	// MaxImages는 확인용이라 다 채우면 프로세스를 끝내는 것이 맞습니다.
+	// MaxIndexed는 다릅니다. 수집만 접고 검색은 계속해야 하므로 여기서
+	// 취소를 걸지 않습니다.
+	if c.cfg.MaxImages > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithCancel(ctx)
 		defer cancel()
 		c.stop = cancel
-	}
-
-	// 이미 차 있으면 한 장도 더 받지 않습니다.
-	if c.atCapacity(ctx) {
-		return nil
 	}
 
 	var wg sync.WaitGroup
@@ -227,8 +225,13 @@ func (c *Crawler) runBackfill(ctx context.Context) {
 			return
 		}
 
+		// 찼다고 반환하면 runAll이 검색까지 내립니다. 쉬면서 다시 봅니다.
+		// 상한을 올리면 다음 주기에 스스로 이어서 돕니다.
 		if c.atCapacity(ctx) {
-			return
+			if !sleepCtx(ctx, idle) {
+				return
+			}
+			continue
 		}
 
 		lease, err := c.lease.AcquireBackfillRange(ctx, domain.LeaseRequest{
@@ -309,7 +312,8 @@ func (c *Crawler) runRetry(ctx context.Context) {
 		case <-ticker.C:
 		}
 
-		items, err := c.lease.LeaseRetries(ctx, c.cfg.SourceSite, c.cfg.ScopeKey, c.cfg.NodeID, c.cfg.RetryBatch)
+		items, err := c.lease.LeaseRetries(ctx, c.cfg.SourceSite, c.cfg.ScopeKey, c.cfg.NodeID,
+			c.cfg.RetryBatch, c.cfg.BackfillFloor)
 		if err != nil {
 			if ctx.Err() == nil {
 				c.log.Warn("재시도 임대 실패", slog.String("error", err.Error()))

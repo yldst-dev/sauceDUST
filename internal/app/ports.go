@@ -36,7 +36,7 @@ type LeaseRepository interface {
 	HighWatermark(ctx context.Context, site, scope string) (int64, error)
 	AdvanceWatermark(ctx context.Context, site, scope string, id int64) error
 	EnqueueRetries(ctx context.Context, site, scope string, postIDs []int64, delay time.Duration) error
-	LeaseRetries(ctx context.Context, site, scope, nodeID string, limit int) ([]domain.PostRetry, error)
+	LeaseRetries(ctx context.Context, site, scope, nodeID string, limit int, floor int64) ([]domain.PostRetry, error)
 	FinishRetry(ctx context.Context, item domain.PostRetry, status domain.RetryStatus, cause error) error
 	RescheduleRetry(ctx context.Context, item domain.PostRetry, delay time.Duration, cause error) error
 }

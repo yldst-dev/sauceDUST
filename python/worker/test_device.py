@@ -46,15 +46,55 @@ def test_batch_override_wins():
     assert plain.batch_size == device.BATCH_SIZES["cuda"]
 
 
-# torch는 판이 올라가며 오래된 세대를 뺍니다. 빠진 판을 깔면 카드가
-# 멀쩡해도 커널이 없다는 말만 나오는데, 그 말로는 원인을 알기 어렵습니다.
-def test_arch_support_is_checked():
-    pascal = (6, 1)
-    assert device.arch_supported(pascal, ["sm_61", "sm_75", "sm_86"])
-    assert not device.arch_supported(pascal, ["sm_75", "sm_86", "sm_90"])
+# 목록에 정확히 같은 이름이 없다고 못 쓰는 것이 아닙니다. CUDA는 같은
+# 세대 안에서 cubin이 앞으로 호환되고 PTX가 있으면 그 자리에서 컴파일도
+# 합니다. 그래서 이것은 안 될 때 이유를 적어 주는 데만 씁니다.
+def test_arch_hint_only_explains():
+    assert device.arch_hint((6, 1), ["sm_61", "sm_75"]) == ""
 
-    # 목록이 비어 있으면 판단하지 않습니다. 막을 근거가 없습니다.
-    assert not device.arch_supported(pascal, [])
+    hint = device.arch_hint((6, 1), ["sm_75", "sm_86"])
+    assert "sm_61" in hint and "sm_75" in hint
+
+
+class _FailingCuda:
+    """CUDA가 있다고는 하는데 실제로는 못 쓰는 상황입니다."""
+
+    class cuda:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def get_device_capability():
+            return (6, 1)
+
+        @staticmethod
+        def get_arch_list():
+            return ["sm_75", "sm_86"]
+
+    class backends:
+        class mps:
+            @staticmethod
+            def is_available():
+                return False
+
+            @staticmethod
+            def is_built():
+                return False
+
+    @staticmethod
+    def zeros(*_args, **_kwargs):
+        raise RuntimeError("no kernel image is available for execution on the device")
+
+
+# 장치를 고르다 예외를 던지면 워커가 아예 뜨지 못합니다. 부르는 쪽의
+# CPU 대체는 모델을 올릴 때만 감싸고 있기 때문입니다.
+def test_unusable_cuda_falls_back_instead_of_raising(monkeypatch):
+    ok, why = device.cuda_usable(_FailingCuda)
+    assert ok is False
+    assert "kernel image" in why
+
+    assert device._cuda_device(_FailingCuda) is None
 
 
 def test_cpu_constant_unchanged():

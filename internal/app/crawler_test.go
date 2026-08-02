@@ -14,19 +14,20 @@ import (
 type fakeLease struct {
 	mu sync.Mutex
 
-	watermark   int64
-	frontier    int64
-	rangeSize   int64
-	handedOut   []domain.CrawlRange
-	finished    []domain.RangeStatus
-	enqueued    []int64
-	advanced    []int64
-	exhausted   bool
-	nextID      int64
-	retryQueue  []domain.PostRetry
-	retryDone   []domain.RetryStatus
-	floorSeen   int64
-	rescheduled int
+	watermark      int64
+	frontier       int64
+	rangeSize      int64
+	handedOut      []domain.CrawlRange
+	finished       []domain.RangeStatus
+	enqueued       []int64
+	advanced       []int64
+	exhausted      bool
+	nextID         int64
+	retryQueue     []domain.PostRetry
+	retryDone      []domain.RetryStatus
+	floorSeen      int64
+	retryFloorSeen int64
+	rescheduled    int
 }
 
 func (f *fakeLease) AcquireBackfillRange(_ context.Context, req domain.LeaseRequest) (*domain.CrawlRange, error) {
@@ -93,9 +94,10 @@ func (f *fakeLease) EnqueueRetries(_ context.Context, _, _ string, ids []int64, 
 	return nil
 }
 
-func (f *fakeLease) LeaseRetries(context.Context, string, string, string, int) ([]domain.PostRetry, error) {
+func (f *fakeLease) LeaseRetries(_ context.Context, _, _, _ string, _ int, floor int64) ([]domain.PostRetry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.retryFloorSeen = floor
 	out := f.retryQueue
 	f.retryQueue = nil
 	return out, nil
@@ -120,13 +122,14 @@ func (f *fakeLease) snapshot() fakeLease {
 	defer f.mu.Unlock()
 	return fakeLease{
 		watermark: f.watermark, frontier: f.frontier, rangeSize: f.rangeSize,
-		floorSeen:   f.floorSeen,
-		handedOut:   append([]domain.CrawlRange(nil), f.handedOut...),
-		finished:    append([]domain.RangeStatus(nil), f.finished...),
-		enqueued:    append([]int64(nil), f.enqueued...),
-		advanced:    append([]int64(nil), f.advanced...),
-		retryDone:   append([]domain.RetryStatus(nil), f.retryDone...),
-		rescheduled: f.rescheduled,
+		floorSeen:      f.floorSeen,
+		retryFloorSeen: f.retryFloorSeen,
+		handedOut:      append([]domain.CrawlRange(nil), f.handedOut...),
+		finished:       append([]domain.RangeStatus(nil), f.finished...),
+		enqueued:       append([]int64(nil), f.enqueued...),
+		advanced:       append([]int64(nil), f.advanced...),
+		retryDone:      append([]domain.RetryStatus(nil), f.retryDone...),
+		rescheduled:    f.rescheduled,
 	}
 }
 

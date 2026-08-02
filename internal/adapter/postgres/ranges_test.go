@@ -303,7 +303,7 @@ func TestResetRetryQueueRevivesDeadItems(t *testing.T) {
 	}
 
 	// 죽은 항목은 임대되지 않아야 합니다.
-	items, _ := store.LeaseRetries(ctx, "danbooru", "default", "retrier", 10)
+	items, _ := store.LeaseRetries(ctx, "danbooru", "default", "retrier", 10, 0)
 	if len(items) != 0 {
 		t.Fatalf("죽은 항목 %d건이 임대되었습니다", len(items))
 	}
@@ -316,7 +316,7 @@ func TestResetRetryQueueRevivesDeadItems(t *testing.T) {
 		t.Fatalf("%d건을 되살렸습니다", count)
 	}
 
-	items, _ = store.LeaseRetries(ctx, "danbooru", "default", "retrier", 10)
+	items, _ = store.LeaseRetries(ctx, "danbooru", "default", "retrier", 10, 0)
 	if len(items) != 3 {
 		t.Fatalf("되살린 뒤 %d건만 임대됩니다", len(items))
 	}

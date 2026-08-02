@@ -111,16 +111,25 @@ func (c *Client) post(ctx context.Context, payload []byte) (retryable bool, err 
 	detail, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 	message := strings.TrimSpace(string(detail))
 
+	return classifyIngestStatus(resp.StatusCode, message)
+}
+
+// classifyIngestStatus는 응답 코드를 보고 다시 보낼지 정합니다.
+func classifyIngestStatus(code int, message string) (bool, error) {
 	switch {
-	case resp.StatusCode == http.StatusUnauthorized:
+	case code == http.StatusUnauthorized:
 		return false, errors.New("중앙 서버 인증에 실패했습니다. SAUCEDUST_CONTROL_TOKEN을 확인하십시오")
-	case resp.StatusCode == http.StatusConflict:
+	case code == http.StatusConflict:
 		// 모델 구성이 다르면 재시도해도 소용없습니다. 바로 멈춥니다.
 		return false, fmt.Errorf("%w: %s", domain.ErrModelMismatch, message)
-	case resp.StatusCode >= 500:
-		return true, fmt.Errorf("중앙 서버 응답이 %d입니다: %s", resp.StatusCode, message)
+	case code == http.StatusInsufficientStorage:
+		// 색인이 찼습니다. 다시 보내도 자리가 생기지 않으므로 멈춥니다.
+		// 500번대에 섞어 두면 끝없이 다시 보냅니다.
+		return false, fmt.Errorf("%w: %s", domain.ErrIndexFull, message)
+	case code >= 500:
+		return true, fmt.Errorf("중앙 서버 응답이 %d입니다: %s", code, message)
 	default:
-		return false, fmt.Errorf("중앙 서버 응답이 %d입니다: %s", resp.StatusCode, message)
+		return false, fmt.Errorf("중앙 서버 응답이 %d입니다: %s", code, message)
 	}
 }
 

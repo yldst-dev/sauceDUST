@@ -32,6 +32,15 @@ type Ingest struct {
 	thumbs ThumbStore
 	models []domain.EmbeddingModel
 	log    *slog.Logger
+
+	// 담을 수 있는 장수와 지금 몇 장인지 세는 것입니다. 0이면 재지 않습니다.
+	//
+	// 작업 노드 쪽에도 같은 검사가 있지만 그것만으로는 부족합니다. 설정을
+	// 빠뜨린 노드나 API를 직접 부르는 쪽은 그 검사를 지나치지 않습니다.
+	// 여기가 자료가 들어오는 유일한 문이므로 여기서 지켜야 합니다.
+	maxIndexed int64
+	counter    IndexCounter
+	ingestCounterState
 }
 
 type IngestDeps struct {
@@ -41,6 +50,9 @@ type IngestDeps struct {
 	Thumbs ThumbStore
 	Models []domain.EmbeddingModel
 	Log    *slog.Logger
+
+	MaxIndexed int64
+	Counter    IndexCounter
 }
 
 func NewIngest(deps IngestDeps) (*Ingest, error) {
@@ -53,6 +65,8 @@ func NewIngest(deps IngestDeps) (*Ingest, error) {
 		return nil, errors.New("벡터 색인이 없습니다")
 	case len(deps.Models) == 0:
 		return nil, errors.New("활성 임베딩 모델이 없습니다")
+	case deps.MaxIndexed > 0 && deps.Counter == nil:
+		return nil, errors.New("담을 장수를 정했는데 세는 것이 없습니다")
 	}
 	if deps.Log == nil {
 		deps.Log = slog.Default()
@@ -60,6 +74,7 @@ func NewIngest(deps IngestDeps) (*Ingest, error) {
 	return &Ingest{
 		images: deps.Images, vector: deps.Vector, index: deps.Index,
 		thumbs: deps.Thumbs, models: deps.Models, log: deps.Log,
+		maxIndexed: deps.MaxIndexed, counter: deps.Counter,
 	}, nil
 }
 
@@ -68,6 +83,9 @@ func NewIngest(deps IngestDeps) (*Ingest, error) {
 func (in *Ingest) Submit(ctx context.Context, batch []domain.IndexedImage) error {
 	if len(batch) == 0 {
 		return nil
+	}
+	if err := in.checkRoom(ctx); err != nil {
+		return err
 	}
 	for i := range batch {
 		if err := domain.ValidateVectors(batch[i].Vectors, in.models); err != nil {

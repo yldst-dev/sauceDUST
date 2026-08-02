@@ -210,6 +210,36 @@ ORDER BY kind`
 
 // VerifyNodeModels는 노드가 보고한 모델이 등록된 활성 모델과 같은지 확인합니다.
 // 하나라도 다르면 벡터가 서로 비교 불가능해지므로 작업을 시작하지 않습니다.
+// AllModels는 등록된 모델을 전부 냅니다. 비활성도 포함합니다.
+//
+// 모델을 비활성으로 바꿔도 Qdrant 컬렉션은 남고 메모리도 그대로 씁니다.
+// 담을 장수를 셀 때 활성만 세면 실제보다 넉넉하게 나옵니다.
+func (s *Store) AllModels(ctx context.Context) ([]domain.EmbeddingModel, error) {
+	const q = `
+SELECT id, kind, backend, checkpoint, vector_size, distance, collection, input_size, active
+FROM embedding_models
+ORDER BY kind`
+
+	rows, err := s.pool.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.EmbeddingModel
+	for rows.Next() {
+		var m domain.EmbeddingModel
+		if err := rows.Scan(&m.ID, &m.Kind, &m.Backend, &m.Checkpoint, &m.VectorSize,
+			&m.Distance, &m.Collection, &m.InputSize, &m.Active); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// VerifyNodeModels는 노드가 보고한 모델이 등록된 활성 모델과 같은지 확인합니다.
+// 하나라도 다르면 벡터가 서로 비교 불가능해지므로 작업을 시작하지 않습니다.
 func (s *Store) VerifyNodeModels(ctx context.Context, nodeID string, reported []domain.EmbeddingModel) error {
 	active, err := s.ActiveModels(ctx)
 	if err != nil {

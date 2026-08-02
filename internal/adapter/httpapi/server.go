@@ -235,8 +235,13 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.deps.Ingest.Submit(r.Context(), batch); err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, domain.ErrModelMismatch) {
+		switch {
+		case errors.Is(err, domain.ErrModelMismatch):
 			status = http.StatusConflict
+		case errors.Is(err, domain.ErrIndexFull):
+			// 다시 보내도 소용없습니다. 보낸 쪽이 재시도 큐에 넣지 않고
+			// 멈추도록 뜻이 분명한 코드를 돌려줍니다.
+			status = http.StatusInsufficientStorage
 		}
 		writeError(w, status, err)
 		return

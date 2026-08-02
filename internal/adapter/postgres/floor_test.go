@@ -97,3 +97,135 @@ func TestFloorCanBeLoweredLater(t *testing.T) {
 		t.Errorf("이미 끝낸 구간을 다시 줬습니다: %d~%d", r.LowerID, r.UpperID)
 	}
 }
+
+// 하한을 올리기 전에 실패한 구간이 계속 다시 나오면 안 됩니다.
+//
+// 임대는 새 구간을 자르기 전에 실패한 구간부터 다시 씁니다. 그쪽 질의에
+// 하한이 없으면 하한을 올려도 옛 실패 구간으로 계속 과거를 긁습니다.
+func TestFloorAlsoBlocksFailedRanges(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+
+	if err := store.InitCatchupState(ctx, "danbooru", "default", 10_000); err != nil {
+		t.Fatalf("상태 초기화 실패: %v", err)
+	}
+	registerNode(t, store, "alpha")
+
+	noFloor := domain.LeaseRequest{
+		SourceSite: "danbooru", ScopeKey: "default", NodeID: "alpha", RangeSize: 100,
+	}
+
+	// 하한 없이 과거로 내려갑니다. 실패시키면 바로 재사용되므로 완료로
+	// 보고하며 걸어 내려간 뒤, 마지막 하나만 실패로 남깁니다.
+	for i := 0; i < 3; i++ {
+		r, err := store.AcquireBackfillRange(ctx, noFloor)
+		if err != nil {
+			t.Fatalf("임대 실패: %v", err)
+		}
+		if err := store.FinishRange(ctx, r, domain.RangeCompleted, 0, nil); err != nil {
+			t.Fatalf("완료 보고 실패: %v", err)
+		}
+	}
+
+	deep, err := store.AcquireBackfillRange(ctx, noFloor)
+	if err != nil {
+		t.Fatalf("임대 실패: %v", err)
+	}
+	if err := store.FinishRange(ctx, deep, domain.RangeFailed, 0, errTestFailure); err != nil {
+		t.Fatalf("실패 보고 실패: %v", err)
+	}
+
+	floor := deep.UpperID + 1
+	withFloor := noFloor
+	withFloor.FloorID = floor
+
+	// 하한을 실패 구간 위로 올렸으니 그 구간은 다시 나오면 안 됩니다.
+	for i := 0; i < 20; i++ {
+		r, err := store.AcquireBackfillRange(ctx, withFloor)
+		if errors.Is(err, domain.ErrNoWork) {
+			return
+		}
+		if err != nil {
+			t.Fatalf("임대 실패: %v", err)
+		}
+		if r.LowerID < floor {
+			t.Fatalf("하한을 %d로 올렸는데 %d~%d 구간을 줬습니다",
+				floor, r.LowerID, r.UpperID)
+		}
+		if err := store.FinishRange(ctx, r, domain.RangeCompleted, 0, nil); err != nil {
+			t.Fatalf("완료 보고 실패: %v", err)
+		}
+	}
+}
+
+// 하한을 다시 낮추면 남겨 둔 실패 구간이 온전히 되살아나야 합니다.
+// 걸치는 구간을 잘라 쓰지 않고 통째로 남기는 이유가 이것입니다.
+func TestLoweringFloorRevivesTheFailedRange(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+
+	if err := store.InitCatchupState(ctx, "danbooru", "default", 10_000); err != nil {
+		t.Fatalf("상태 초기화 실패: %v", err)
+	}
+	registerNode(t, store, "alpha")
+
+	req := domain.LeaseRequest{
+		SourceSite: "danbooru", ScopeKey: "default", NodeID: "alpha", RangeSize: 100,
+	}
+	deep, err := store.AcquireBackfillRange(ctx, req)
+	if err != nil {
+		t.Fatalf("임대 실패: %v", err)
+	}
+	if err := store.FinishRange(ctx, deep, domain.RangeFailed, 0, errTestFailure); err != nil {
+		t.Fatalf("실패 보고 실패: %v", err)
+	}
+
+	// 하한을 올리면 안 나옵니다.
+	req.FloorID = deep.UpperID + 1
+	if _, err := store.AcquireBackfillRange(ctx, req); !errors.Is(err, domain.ErrNoWork) {
+		t.Fatalf("하한 위로 올렸는데 일을 줬습니다: %v", err)
+	}
+
+	// 낮추면 원래 경계 그대로 다시 나와야 합니다.
+	req.FloorID = 0
+	back, err := store.AcquireBackfillRange(ctx, req)
+	if err != nil {
+		t.Fatalf("하한을 낮췄는데 일을 주지 않습니다: %v", err)
+	}
+	if back.LowerID != deep.LowerID || back.UpperID != deep.UpperID {
+		t.Errorf("구간이 %d~%d로 돌아왔습니다. %d~%d를 기대했습니다",
+			back.LowerID, back.UpperID, deep.LowerID, deep.UpperID)
+	}
+}
+
+// 재시도 큐도 하한 아래는 내주면 안 됩니다.
+func TestRetryQueueRespectsTheFloor(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+
+	if err := store.InitCatchupState(ctx, "danbooru", "default", 10_000); err != nil {
+		t.Fatalf("상태 초기화 실패: %v", err)
+	}
+	registerNode(t, store, "alpha")
+
+	err := store.EnqueueRetries(ctx, "danbooru", "default",
+		[]int64{100, 5_000, 9_500, 9_900}, 0)
+	if err != nil {
+		t.Fatalf("재시도 등록 실패: %v", err)
+	}
+
+	items, err := store.LeaseRetries(ctx, "danbooru", "default", "alpha", 10, 9_800)
+	if err != nil {
+		t.Fatalf("재시도 임대 실패: %v", err)
+	}
+	for _, item := range items {
+		if item.SourcePostID < 9_800 {
+			t.Errorf("하한 9800 아래 게시물 %d를 내줬습니다", item.SourcePostID)
+		}
+	}
+	if len(items) != 1 {
+		t.Errorf("하한 위 항목은 하나뿐인데 %d개를 줬습니다", len(items))
+	}
+}
+
+var errTestFailure = errors.New("시험용 실패")

@@ -243,6 +243,7 @@ func (r *nodeRuntime) newIngest(ctx context.Context, models []domain.EmbeddingMo
 	return app.NewIngest(app.IngestDeps{
 		Images: r.store, Vector: r.store, Index: index,
 		Thumbs: thumbs, Models: models, Log: r.log,
+		MaxIndexed: r.cfg.MaxIndexed, Counter: r.store,
 	})
 }
 

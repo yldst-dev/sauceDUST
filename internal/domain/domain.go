@@ -11,6 +11,9 @@ var (
 	ErrNotFound      = errors.New("찾지 못했습니다")
 	ErrLeaseConflict = errors.New("임대가 이미 회수되었습니다")
 	ErrModelMismatch = errors.New("임베딩 모델이 일치하지 않습니다")
+	// ErrIndexFull은 색인이 담을 수 있는 만큼 찼다는 뜻입니다.
+	// 다시 보내도 소용없으므로 보낸 쪽은 재시도하지 말고 멈춰야 합니다.
+	ErrIndexFull = errors.New("색인이 담을 수 있는 만큼 찼습니다")
 	// ErrBadVector는 값 자체가 망가진 벡터입니다. 모델 구성은 맞지만
 	// 계산 결과를 쓸 수 없는 경우이므로 모델 불일치와 구분합니다.
 	ErrBadVector = errors.New("벡터 값이 잘못되었습니다")

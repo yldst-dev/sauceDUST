@@ -232,7 +232,7 @@ func TestLeaseRetriesIsExclusive(t *testing.T) {
 		wg.Add(1)
 		go func(node string) {
 			defer wg.Done()
-			items, err := store.LeaseRetries(ctx, "danbooru", "default", node, 8)
+			items, err := store.LeaseRetries(ctx, "danbooru", "default", node, 8, 0)
 			if err != nil {
 				t.Errorf("%s 임대 실패: %v", node, err)
 				return

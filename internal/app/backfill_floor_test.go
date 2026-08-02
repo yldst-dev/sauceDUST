@@ -43,3 +43,17 @@ func runBriefly(t *testing.T, cfg CrawlerConfig) fakeLease {
 
 	return lease.snapshot()
 }
+
+// 재시도 큐에도 하한이 가야 합니다.
+//
+// 하한을 올리기 전에 실패해 큐에 남은 게시물이 계속 다시 색인되면
+// 하한을 둔 뜻이 없어집니다.
+func TestBackfillFloorReachesTheRetryQueue(t *testing.T) {
+	cfg := baseConfig()
+	cfg.BackfillFloor = 150
+
+	lease := runBriefly(t, cfg)
+	if lease.retryFloorSeen != 150 {
+		t.Errorf("재시도 임대가 받은 하한이 %d입니다", lease.retryFloorSeen)
+	}
+}

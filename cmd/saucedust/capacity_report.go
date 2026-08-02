@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"strconv"
 
@@ -16,7 +17,17 @@ import (
 //
 // 그래서 사용자가 계산해서 넣기를 기다리지 않고, 이 컴퓨터 메모리로 몇 장이
 // 들어가는지 시작할 때 알려 줍니다.
-func reportCapacity(rt *nodeRuntime, models []domain.EmbeddingModel) {
+func reportCapacity(ctx context.Context, rt *nodeRuntime, active []domain.EmbeddingModel) {
+	// 활성 모델만 세면 안 됩니다. 모델을 비활성으로 바꿔도 Qdrant 컬렉션은
+	// 남아 메모리를 그대로 씁니다. 세지 않으면 실제보다 넉넉하게 나옵니다.
+	models := active
+	if all, err := rt.store.AllModels(ctx); err != nil {
+		rt.log.Warn("등록된 모델을 다 읽지 못해 활성 모델로만 셉니다",
+			slog.String("error", err.Error()))
+	} else if len(all) > 0 {
+		models = all
+	}
+
 	sizes := make([]int, 0, len(models))
 	for _, m := range models {
 		sizes = append(sizes, m.VectorSize)
@@ -28,6 +39,7 @@ func reportCapacity(rt *nodeRuntime, models []domain.EmbeddingModel) {
 
 	if rt.cfg.MaxIndexed > 0 {
 		rt.log.Info("담을 장수를 정해 두었습니다",
+			slog.Int("컬렉션 수", len(sizes)),
 			slog.Int64("상한", rt.cfg.MaxIndexed),
 			slog.Int64("장당 메모리 바이트", perImage),
 			slog.String("필요한 메모리", humanBytes(rt.cfg.MaxIndexed*perImage)))

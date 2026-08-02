@@ -68,10 +68,14 @@ func (c *Client) EnsureCollection(ctx context.Context, m domain.EmbeddingModel) 
 		return c.verifyCollection(ctx, m)
 	}
 
+	// on_disk를 명시합니다. 지금 판의 기본값도 원본을 memmap으로 두지만
+	// 문서에 적히지 않은 기본값이라, 판이 올라가며 바뀌면 메모리 요건이
+	// 조용히 몇 배로 뜁니다. 담을 장수 계산이 그 전제 위에 있습니다.
 	body := map[string]any{
 		"vectors": map[string]any{
 			"size":     m.VectorSize,
 			"distance": distanceName(m.Distance),
+			"on_disk":  true,
 		},
 	}
 	if c.quantize {

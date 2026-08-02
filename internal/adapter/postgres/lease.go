@@ -44,6 +44,10 @@ WITH candidate AS (
       AND scope_key = $2
       AND direction = $3
       AND attempts < $6
+      -- 하한 아래로 걸치는 구간은 건드리지 않습니다. 잘라서 쓰면 잘라
+      -- 낸 쪽이 완료로 표시되어, 나중에 하한을 낮춰도 영영 안 모입니다.
+      -- 그대로 두면 하한을 낮췄을 때 온전한 채로 다시 잡힙니다.
+      AND lower_id >= $7
       AND (status = 'failed'
            OR (status = 'running' AND leased_at < now() - $5::interval))
     ORDER BY attempts, id
@@ -62,7 +66,7 @@ RETURNING r.id, r.lower_id, r.upper_id, r.attempts`
 
 	var out domain.CrawlRange
 	err := s.pool.QueryRow(ctx, q, req.SourceSite, req.ScopeKey, string(domain.DirectionBackfill),
-		req.NodeID, staleLease, maxAttempts).
+		req.NodeID, staleLease, maxAttempts, req.FloorID).
 		Scan(&out.ID, &out.LowerID, &out.UpperID, &out.Attempts)
 	if err != nil {
 		if isNoRows(err) {
@@ -232,7 +236,11 @@ WHERE crawl_post_retries.status <> 'succeeded'`, site, scope, id, delay)
 	return s.pool.SendBatch(ctx, batch).Close()
 }
 
-func (s *Store) LeaseRetries(ctx context.Context, site, scope, nodeID string, limit int) ([]domain.PostRetry, error) {
+// LeaseRetries는 실패한 게시물을 다시 시도하려고 꺼내 옵니다.
+//
+// floor 아래 게시물은 꺼내지 않습니다. 하한을 올리기 전에 실패해 큐에 남은
+// 것들이 계속 다시 색인되면 하한을 둔 뜻이 없어집니다.
+func (s *Store) LeaseRetries(ctx context.Context, site, scope, nodeID string, limit int, floor int64) ([]domain.PostRetry, error) {
 	const q = `
 WITH candidate AS (
     SELECT id
@@ -240,6 +248,7 @@ WITH candidate AS (
     WHERE source_site = $1
       AND scope_key = $2
       AND attempts < $5
+      AND source_post_id >= $7
       AND ((status = 'pending' AND ready_at <= now())
            OR (status = 'running' AND leased_at < now() - $6::interval))
     ORDER BY ready_at
@@ -252,7 +261,7 @@ FROM candidate c
 WHERE r.id = c.id
 RETURNING r.id, r.source_post_id, r.attempts`
 
-	rows, err := s.pool.Query(ctx, q, site, scope, nodeID, limit, maxAttempts, staleLease)
+	rows, err := s.pool.Query(ctx, q, site, scope, nodeID, limit, maxAttempts, staleLease, floor)
 	if err != nil {
 		return nil, fmt.Errorf("재시도 임대에 실패했습니다: %w", err)
 	}

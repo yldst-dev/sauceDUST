@@ -209,6 +209,61 @@ SAUCEDUST_CONTROL_TOKEN=길고-무작위인-문자열
 | **작업 노드에 남은 이미지** | **0장** |
 | 중앙에서 검색 | 망가뜨린 사본 10건 모두 1등 정답 |
 
+## 디스크를 나눠 두기
+
+쌓이는 440 GB 중 성격이 다른 두 덩어리가 섞여 있습니다.
+
+| | 크기 | 어떻게 읽히나 | 어디에 |
+|---|---|---|---|
+| 축소본 | 300 GB | 한 번 쓰고 거의 안 읽음 | **HDD로 충분** |
+| Qdrant, PostgreSQL | 140 GB | 검색할 때마다 임의 읽기 | **SSD여야 함** |
+
+검색은 Qdrant에서 후보를 뽑고 PostgreSQL에서 메타데이터와 해시를 꺼내는
+흐름이라 전부 임의 읽기입니다. HDD는 초당 100~200회쯤 하고 NVMe는 그
+수백 배입니다. 적재는 순차 쓰기라 HDD로도 되지만 **검색이 못 쓰게 됩니다.**
+
+`SAUCEDUST_THUMB_DIR`로 축소본만 떼어 냅니다.
+
+```bash
+# .env
+SAUCEDUST_THUMB_DIR=/mnt/hdd/saucedust/thumbs
+SAUCEDUST_DATA_DIR=/var/lib/saucedust
+```
+
+PostgreSQL과 Qdrant의 자료 위치는 각자의 설정에서 SSD로 잡으십시오.
+
+## Proxmox 가상 기계에 올릴 때
+
+GPU를 PCIe로 넘기면 계산 성능은 그대로입니다. 걸리는 곳은 따로 있습니다.
+
+**GPU 패스스루.** BIOS에서 IOMMU(Intel VT-d, AMD-Vi)를 켜고 커널 인자에
+`intel_iommu=on` 또는 `amd_iommu=on`을 넣습니다. GPU가 자기 IOMMU 그룹에
+혼자 있어야 하고, 호스트가 그 카드를 잡지 않도록 `nouveau`와 `nvidia`를
+막고 `vfio-pci`에 묶습니다. 게스트에서는 Secure Boot가 켜져 있으면 서명되지
+않은 드라이버 모듈이 막히므로 끄거나 서명하십시오.
+
+넘어갔는지는 워커를 띄우기 전에 확인하십시오.
+
+```bash
+nvidia-smi
+./saucedust doctor
+```
+
+**디스크 패스스루는 두 가지가 다릅니다.** 컨트롤러를 통째로 넘기는 PCIe
+패스스루는 게스트가 장치를 직접 가집니다. `qm set`으로 디스크 하나를
+붙이는 것은 QEMU 블록 계층을 지나므로 같지 않습니다. 후자를 쓴다면
+**캐시 방식을 반드시 `none`으로** 두십시오. `writeback`은 빠른 대신
+호스트가 갑자기 꺼졌을 때 PostgreSQL이 지켰다고 믿은 쓰기가 사라집니다.
+
+```bash
+qm set 100 -scsi1 /dev/disk/by-id/ata-... ,cache=none
+```
+
+**메모리를 넉넉히 주십시오.** 1,000만 장이면 Qdrant만 23 GB를 붙들고 있고
+memmap 구간이 59 GB입니다. 가상 기계에 32 GB만 주면 뜨기는 해도 검색할
+때마다 디스크를 때립니다. 풍선(ballooning)은 꺼 두십시오. 페이지 캐시가
+줄었다 늘었다 하면 검색 시간이 들쭉날쭉해집니다.
+
 ## 메시 VPN으로 묶기
 
 컴퓨터가 여러 집이나 사무실에 흩어져 있을 때 쓰는 방법입니다. 모든 노드가

@@ -48,7 +48,12 @@ func (s *ThumbStore) Put(ctx context.Context, site string, postID int64, jpeg []
 	}
 
 	rel := RelPath(site, postID)
-	full := filepath.Join(s.root, rel)
+	// site는 설정에서 옵니다. 오타 하나로 저장 루트 바깥에 쓰게 두지 않습니다.
+	// 읽기 쪽과 같은 잣대를 씁니다.
+	full, err := s.resolve(rel)
+	if err != nil {
+		return "", err
+	}
 
 	if err := s.ensureDir(filepath.Dir(full)); err != nil {
 		return "", err
@@ -138,9 +143,33 @@ func RelPath(site string, postID int64) string {
 	high := (postID >> 8) & 0xff
 
 	return filepath.Join(
-		site,
+		safeSegment(site),
 		fmt.Sprintf("%02x", low),
 		fmt.Sprintf("%02x", high),
 		fmt.Sprintf("%d.jpg", postID),
 	)
+}
+
+// safeSegment는 사이트 이름을 폴더 이름 한 칸으로 만듭니다.
+//
+// 여기서 나온 값이 DB의 thumb_path에 그대로 들어갑니다. 설정에 빗금이나
+// 상위 폴더 표시가 섞이면 저장할 때는 걸러지더라도 DB에는 루트를 벗어나는
+// 경로가 남습니다. 나중에 그 값을 그대로 이어 붙이는 코드가 생기면
+// 그때 문제가 됩니다. 만들 때 한 칸으로 못 박아 둡니다.
+func safeSegment(raw string) string {
+	var b strings.Builder
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r + ('a' - 'A'))
+		default:
+			b.WriteByte('-')
+		}
+	}
+	if out := strings.Trim(b.String(), "-"); out != "" {
+		return out
+	}
+	return "unknown"
 }

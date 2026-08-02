@@ -4,6 +4,7 @@ package config
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -83,7 +84,9 @@ func Load(root string) (*Config, error) {
 		return nil, err
 	}
 
-	dataDir := envStr("SAUCEDUST_DATA_DIR", "")
+	r := &reader{}
+
+	dataDir := r.str("SAUCEDUST_DATA_DIR", "")
 	if dataDir == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -93,94 +96,106 @@ func Load(root string) (*Config, error) {
 	}
 	dataDir = expandPath(dataDir, root)
 
-	role := domain.Role(envStr("SAUCEDUST_NODE_ROLE", string(domain.RoleControl)))
+	role := domain.Role(r.str("SAUCEDUST_NODE_ROLE", string(domain.RoleControl)))
 	if !role.Valid() {
 		return nil, fmt.Errorf("SAUCEDUST_NODE_ROLE 값이 잘못되었습니다: %q (control 또는 worker)", role)
 	}
 
-	nodeID := envStr("SAUCEDUST_NODE_ID", "")
+	nodeID := r.str("SAUCEDUST_NODE_ID", "")
 	if nodeID == "" {
 		host, err := os.Hostname()
 		if err != nil || host == "" {
-			return nil, fmt.Errorf("SAUCEDUST_NODE_ID를 정할 수 없습니다. .env에 직접 지정하십시오")
+			return nil, errNoNodeID
 		}
-		nodeID = sanitizeNodeID(host)
+		// 컴퓨터 이름이 전부 한글이면 쓸 수 있는 글자가 하나도 남지 않습니다.
+		// 그대로 두면 모든 노드가 빈 이름으로 등록되어 서로를 덮어씁니다.
+		if nodeID = sanitizeNodeID(host); nodeID == "" {
+			return nil, errNoNodeID
+		}
 	}
 
 	cfg := &Config{
 		NodeID:   nodeID,
 		Role:     role,
 		DataDir:  dataDir,
-		ThumbDir: expandPath(envStr("SAUCEDUST_THUMB_DIR", filepath.Join(dataDir, "thumbs")), root),
+		ThumbDir: expandPath(r.str("SAUCEDUST_THUMB_DIR", filepath.Join(dataDir, "thumbs")), root),
 
-		DatabaseURL:    envStr("DATABASE_URL", "postgres://sauce:saucepass@localhost:5432/sauce"),
-		MaxConnections: envInt("POSTGRES_MAX_CONNECTIONS", 0),
-		AcquireTimeout: envDuration("POSTGRES_ACQUIRE_TIMEOUT_SECS", 120*time.Second),
+		DatabaseURL:    r.str("DATABASE_URL", "postgres://sauce:saucepass@localhost:5432/sauce"),
+		MaxConnections: r.intVal("POSTGRES_MAX_CONNECTIONS", 0),
+		AcquireTimeout: r.secs("POSTGRES_ACQUIRE_TIMEOUT_SECS", 120*time.Second),
 
-		QdrantURL:    envStr("QDRANT_URL", "http://localhost:6333"),
-		QdrantAPIKey: envStr("QDRANT_API_KEY", ""),
+		QdrantURL:    r.str("QDRANT_URL", "http://localhost:6333"),
+		QdrantAPIKey: r.str("QDRANT_API_KEY", ""),
 
-		ControlURL:   strings.TrimRight(envStr("SAUCEDUST_CONTROL_URL", "http://localhost:8000"), "/"),
-		ControlToken: envStr("SAUCEDUST_CONTROL_TOKEN", ""),
-		ControlBind:  envStr("SAUCEDUST_CONTROL_BIND", "127.0.0.1:8000"),
+		ControlURL:   r.url("SAUCEDUST_CONTROL_URL", "http://localhost:8000"),
+		ControlToken: r.str("SAUCEDUST_CONTROL_TOKEN", ""),
+		ControlBind:  r.str("SAUCEDUST_CONTROL_BIND", "127.0.0.1:8000"),
 
-		EmbedWorkerURL:   strings.TrimRight(envStr("EMBED_WORKER_URL", "http://127.0.0.1:8100"), "/"),
-		EmbedBatchSize:   envInt("EMBED_BATCH_SIZE", 16),
-		EmbedBatchWindow: envMillis("EMBED_BATCH_TIMEOUT_MS", 50*time.Millisecond),
+		EmbedWorkerURL:   r.url("EMBED_WORKER_URL", "http://127.0.0.1:8100"),
+		EmbedBatchSize:   r.intVal("EMBED_BATCH_SIZE", 16),
+		EmbedBatchWindow: r.millis("EMBED_BATCH_TIMEOUT_MS", 50*time.Millisecond),
 
-		SourceSite:     envStr("SAUCEDUST_SOURCE_SITE", "danbooru"),
-		ScopeKey:       envStr("SAUCEDUST_SCOPE_KEY", "default"),
-		IndexTags:      envStr("INDEX_TAGS", ""),
-		PollEvery:      envDuration("SAUCEDUST_POLL_SECS", 15*time.Second),
-		UserAgent:      envStr("SAUCEDUST_USER_AGENT", "saucedust/0.2"),
-		DanbooruAPI:    strings.TrimRight(envStr("DANBOORU_API_URL", "https://danbooru.donmai.us"), "/"),
-		DanbooruLogin:  envStr("DANBOORU_LOGIN", ""),
-		DanbooruAPIKey: envStr("DANBOORU_API_KEY", ""),
+		SourceSite:     r.str("SAUCEDUST_SOURCE_SITE", "danbooru"),
+		ScopeKey:       r.str("SAUCEDUST_SCOPE_KEY", "default"),
+		IndexTags:      r.str("INDEX_TAGS", ""),
+		PollEvery:      r.secs("SAUCEDUST_POLL_SECS", 15*time.Second),
+		UserAgent:      r.str("SAUCEDUST_USER_AGENT", "saucedust/0.2"),
+		DanbooruAPI:    r.url("DANBOORU_API_URL", "https://danbooru.donmai.us"),
+		DanbooruLogin:  r.str("DANBOORU_LOGIN", ""),
+		DanbooruAPIKey: r.str("DANBOORU_API_KEY", ""),
 
-		BackfillWorkers:   envInt("CRAWL_BACKFILL_WORKERS", 2),
-		BackfillRangeSize: int64(envInt("CRAWL_BACKFILL_RANGE_SIZE", 10000)),
+		BackfillWorkers:   r.intVal("CRAWL_BACKFILL_WORKERS", 2),
+		BackfillRangeSize: int64(r.intVal("CRAWL_BACKFILL_RANGE_SIZE", 10000)),
 
-		Concurrency:    envInt("CRAWL_CONCURRENCY", 4),
-		MinConcurrency: envInt("CRAWL_MIN_CONCURRENCY", 1),
-		MaxConcurrency: envInt("CRAWL_MAX_CONCURRENCY", 16),
-		Adaptive:       envBool("CRAWL_ADAPTIVE", true),
-		RatePerSecond:  envFloat("CRAWL_RATE_PER_SEC", 5),
-		RateBurst:      envInt("CRAWL_RATE_BURST", 8),
+		Concurrency:    r.intVal("CRAWL_CONCURRENCY", 4),
+		MinConcurrency: r.intVal("CRAWL_MIN_CONCURRENCY", 1),
+		MaxConcurrency: r.intVal("CRAWL_MAX_CONCURRENCY", 16),
+		Adaptive:       r.boolVal("CRAWL_ADAPTIVE", true),
+		RatePerSecond:  r.floatVal("CRAWL_RATE_PER_SEC", 5),
+		RateBurst:      r.intVal("CRAWL_RATE_BURST", 8),
 
-		ThumbSize:    envInt("THUMB_SIZE", 384),
-		ThumbQuality: envInt("THUMB_QUALITY", 85),
+		ThumbSize:    r.intVal("THUMB_SIZE", 384),
+		ThumbQuality: r.intVal("THUMB_QUALITY", 85),
 
-		FragmentParts: envInt("SAUCEDUST_FRAGMENT_PARTS", 3),
-		FragmentDelay: envMillis("SAUCEDUST_FRAGMENT_DELAY_MS", 0),
-		ProxyURL:      envStr("SAUCEDUST_PROXY_URL", ""),
-		AllowPrivate:  envBool("SAUCEDUST_ALLOW_PRIVATE_TARGETS", false),
-		DirectOnFail:  envBool("SAUCEDUST_DIRECT_FALLBACK", true),
-		ProbeInterval: envDuration("SAUCEDUST_PROBE_INTERVAL_SECS", 3600*time.Second),
+		FragmentParts: r.intVal("SAUCEDUST_FRAGMENT_PARTS", 3),
+		FragmentDelay: r.millis("SAUCEDUST_FRAGMENT_DELAY_MS", 0),
+		ProxyURL:      r.str("SAUCEDUST_PROXY_URL", ""),
+		AllowPrivate:  r.boolVal("SAUCEDUST_ALLOW_PRIVATE_TARGETS", false),
+		DirectOnFail:  r.boolVal("SAUCEDUST_DIRECT_FALLBACK", true),
+		ProbeInterval: r.secs("SAUCEDUST_PROBE_INTERVAL_SECS", 3600*time.Second),
 
-		HeartbeatEvery: envDuration("SAUCEDUST_HEARTBEAT_SECS", 30*time.Second),
-		NodeTimeout:    envDuration("SAUCEDUST_NODE_TIMEOUT_SECS", 90*time.Second),
+		HeartbeatEvery: r.secs("SAUCEDUST_HEARTBEAT_SECS", 30*time.Second),
+		NodeTimeout:    r.secs("SAUCEDUST_NODE_TIMEOUT_SECS", 90*time.Second),
 
-		TelegramToken:       envStr("TELEGRAM_BOT_TOKEN", ""),
-		TelegramPollTimeout: envDuration("TELEGRAM_POLL_TIMEOUT_SECS", 30*time.Second),
+		TelegramToken:       r.str("TELEGRAM_BOT_TOKEN", ""),
+		TelegramPollTimeout: r.secs("TELEGRAM_POLL_TIMEOUT_SECS", 30*time.Second),
 	}
 
-	allowed, err := parseIDs(envStr("TELEGRAM_ALLOWED_USERS", ""))
+	allowed, err := parseIDs(r.str("TELEGRAM_ALLOWED_USERS", ""))
 	if err != nil {
 		return nil, err
 	}
 	cfg.TelegramAllowedUsers = allowed
 
-	order, err := parseNetOrder(envStr("SAUCEDUST_NET_ORDER", "direct,ech,frag,vpn"))
+	order, err := parseNetOrder(r.str("SAUCEDUST_NET_ORDER", "direct,ech,frag,vpn"))
 	if err != nil {
 		return nil, err
 	}
 	cfg.NetOrder = order
 
+	// 잘못 적힌 값을 먼저 알립니다. 기본값으로 대체된 상태에서 validate를 돌리면
+	// 엉뚱한 항목을 탓하는 오류가 나옵니다.
+	if err := r.err(); err != nil {
+		return nil, err
+	}
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 	return cfg, nil
 }
+
+var errNoNodeID = errors.New(
+	"SAUCEDUST_NODE_ID를 정할 수 없습니다. 컴퓨터 이름에서 쓸 수 있는 글자를 찾지 못했습니다. .env에 직접 지정하십시오")
 
 func (c *Config) validate() error {
 	if c.MinConcurrency < 1 {
@@ -349,51 +364,123 @@ func sanitizeNodeID(raw string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-func envStr(key, def string) string {
-	if v, ok := os.LookupEnv(key); ok && strings.TrimSpace(v) != "" {
-		return strings.TrimSpace(v)
-	}
-	return def
+// reader는 환경값을 읽으면서 잘못 적힌 것을 모읍니다.
+//
+// 값이 있는데 해석하지 못하면 기본값으로 조용히 넘어가지 않고 오류로 올립니다.
+// CRAWL_RATE_PER_SEC에 오타를 내고도 아무 말 없이 기본값으로 도는 것이
+// 가장 나쁜 경우입니다. 운영자는 값을 바꿨다고 믿고 있습니다.
+//
+// 하나 만날 때마다 멈추지 않고 끝까지 읽는 이유는, 오타가 여러 개일 때
+// 고치고 다시 돌리기를 반복하지 않게 하기 위해서입니다.
+type reader struct {
+	errs []string
 }
 
-func envInt(key string, def int) int {
-	if v, err := strconv.Atoi(envStr(key, "")); err == nil {
+func (r *reader) reject(key, raw, want string) {
+	r.errs = append(r.errs, fmt.Sprintf("%s=%q: %s여야 합니다", key, raw, want))
+}
+
+func (r *reader) err() error {
+	switch len(r.errs) {
+	case 0:
+		return nil
+	case 1:
+		return fmt.Errorf("설정값이 잘못되었습니다. %s", r.errs[0])
+	default:
+		return fmt.Errorf("설정값 %d개가 잘못되었습니다.\n  %s",
+			len(r.errs), strings.Join(r.errs, "\n  "))
+	}
+}
+
+// raw는 값이 실제로 적혀 있는지까지 알려줍니다.
+// 빈 문자열은 적지 않은 것으로 봅니다. .env에 `KEY=`만 남겨 두는 일이 흔합니다.
+func (r *reader) raw(key string) (string, bool) {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return "", false
+	}
+	v = strings.TrimSpace(v)
+	return v, v != ""
+}
+
+func (r *reader) str(key, def string) string {
+	if v, ok := r.raw(key); ok {
 		return v
 	}
 	return def
 }
 
-func envBool(key string, def bool) bool {
-	switch strings.ToLower(envStr(key, "")) {
+// url은 뒤에 붙은 빗금을 떼어 냅니다. 경로를 이어 붙일 때 두 겹이 되지 않게 합니다.
+func (r *reader) url(key, def string) string {
+	return strings.TrimRight(r.str(key, def), "/")
+}
+
+func (r *reader) intVal(key string, def int) int {
+	v, ok := r.raw(key)
+	if !ok {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		r.reject(key, v, "정수")
+		return def
+	}
+	return n
+}
+
+func (r *reader) boolVal(key string, def bool) bool {
+	v, ok := r.raw(key)
+	if !ok {
+		return def
+	}
+	switch strings.ToLower(v) {
 	case "1", "true", "yes", "on":
 		return true
 	case "0", "false", "no", "off":
 		return false
 	}
+	r.reject(key, v, "1 또는 0 (true, false, yes, no, on, off도 됩니다)")
 	return def
 }
 
-func envFloat(key string, def float64) float64 {
-	if raw := envStr(key, ""); raw != "" {
-		if v, err := strconv.ParseFloat(raw, 64); err == nil {
-			return v
-		}
+func (r *reader) floatVal(key string, def float64) float64 {
+	v, ok := r.raw(key)
+	if !ok {
+		return def
 	}
-	return def
+	n, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		r.reject(key, v, "숫자")
+		return def
+	}
+	return n
 }
 
-func envDuration(key string, def time.Duration) time.Duration {
-	if v := envInt(key, 0); v > 0 {
-		return time.Duration(v) * time.Second
-	}
-	return def
+// secs와 millis는 0을 그대로 받습니다. 0으로 꺼 두려는 설정을 기본값으로
+// 되돌려 버리면 운영자가 끌 방법이 없어집니다.
+func (r *reader) secs(key string, def time.Duration) time.Duration {
+	return r.span(key, def, time.Second)
 }
 
-func envMillis(key string, def time.Duration) time.Duration {
-	if v := envInt(key, 0); v > 0 {
-		return time.Duration(v) * time.Millisecond
+func (r *reader) millis(key string, def time.Duration) time.Duration {
+	return r.span(key, def, time.Millisecond)
+}
+
+func (r *reader) span(key string, def time.Duration, unit time.Duration) time.Duration {
+	v, ok := r.raw(key)
+	if !ok {
+		return def
 	}
-	return def
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		r.reject(key, v, "정수")
+		return def
+	}
+	if n < 0 {
+		r.reject(key, v, "0 이상")
+		return def
+	}
+	return time.Duration(n) * unit
 }
 
 func clamp(v, lo, hi int) int {

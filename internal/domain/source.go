@@ -32,7 +32,13 @@ var allowedExt = map[string]bool{
 	".jpg": true, ".jpeg": true, ".png": true, ".webp": true,
 }
 
-// DownloadURL은 큰 이미지부터 순서대로 고릅니다.
+// DownloadURL은 내려받을 주소를 고릅니다.
+//
+// LargeURL을 먼저 봅니다. Danbooru에서 이 값은 원본이 아니라 긴 변 850픽셀
+// 안팎의 견본입니다. 어차피 512로 줄여서 계산하므로 원본을 받으면 대역폭만
+// 몇 배로 쓰고 결과는 같습니다. 견본이 없을 때만 원본(FileURL)으로 갑니다.
+//
+// 확장자를 걸러 내는 이유는 동영상과 애니메이션 GIF 때문입니다.
 func (p SourcePost) DownloadURL() string {
 	for _, candidate := range []string{p.LargeURL, p.FileURL, p.PreviewURL} {
 		if candidate != "" && allowedExt[strings.ToLower(path.Ext(stripQuery(candidate)))] {

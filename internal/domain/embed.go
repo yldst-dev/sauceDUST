@@ -1,6 +1,9 @@
 package domain
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 // EmbedderInfo는 워커가 실제로 올린 모델과 장치를 보고합니다.
 // 노드마다 다른 모델을 쓰면 벡터를 비교할 수 없으므로 시작 시 반드시 확인합니다.
@@ -65,6 +68,25 @@ func ValidateVectors(vectors []Vector, active []EmbeddingModel) error {
 			return fmt.Errorf("%w: 모델 %s의 벡터 차원이 %d입니다. 기준은 %d입니다",
 				ErrModelMismatch, m.ID, len(values), m.VectorSize)
 		}
+		if i, ok := firstNonFinite(values); ok {
+			return fmt.Errorf("%w: 모델 %s의 벡터 %d번째 값이 숫자가 아닙니다(%v)",
+				ErrBadVector, m.ID, i, values[i])
+		}
 	}
 	return nil
+}
+
+// firstNonFinite는 NaN이나 무한대가 처음 나온 자리를 알려줍니다.
+//
+// CUDA에서는 fp16으로 추론합니다. fp16은 65504를 넘으면 무한대가 되고,
+// 그 상태로 정규화하면 벡터 전체가 NaN이 됩니다. 그대로 저장하면 Qdrant에
+// 어떤 질의에도 걸리지 않는 죽은 점이 쌓이는데, 오류가 나지 않으니
+// 나중에 세어 보기 전까지 알아채지 못합니다.
+func firstNonFinite(values []float32) (int, bool) {
+	for i, v := range values {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			return i, true
+		}
+	}
+	return 0, false
 }

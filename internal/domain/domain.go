@@ -11,6 +11,9 @@ var (
 	ErrNotFound      = errors.New("찾지 못했습니다")
 	ErrLeaseConflict = errors.New("임대가 이미 회수되었습니다")
 	ErrModelMismatch = errors.New("임베딩 모델이 일치하지 않습니다")
+	// ErrBadVector는 값 자체가 망가진 벡터입니다. 모델 구성은 맞지만
+	// 계산 결과를 쓸 수 없는 경우이므로 모델 불일치와 구분합니다.
+	ErrBadVector = errors.New("벡터 값이 잘못되었습니다")
 	// ErrNoWork는 지금 배정할 작업이 없다는 뜻입니다. 오류가 아니라 정상 상태이며,
 	// 호출자는 잠시 쉬었다가 다시 물어보면 됩니다.
 	ErrNoWork = errors.New("배정할 작업이 없습니다")

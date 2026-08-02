@@ -89,6 +89,8 @@ func cmdControl(ctx context.Context, args []string) error {
 		return err
 	}
 
+	reportCapacity(rt, models)
+
 	// 여기까지 왔는데 토큰이 비었다면 되돌아오는 주소입니다.
 	// 밖으로 열린 주소는 httpapi.New가 이미 막았습니다.
 	if rt.cfg.ControlToken == "" {

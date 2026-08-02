@@ -49,6 +49,7 @@ type Config struct {
 	BackfillWorkers   int
 	BackfillRangeSize int64
 	BackfillFloor     int64
+	MaxIndexed        int64
 
 	Concurrency    int
 	MinConcurrency int
@@ -148,6 +149,7 @@ func Load(root string) (*Config, error) {
 		BackfillWorkers:   r.intVal("CRAWL_BACKFILL_WORKERS", 2),
 		BackfillRangeSize: int64(r.intVal("CRAWL_BACKFILL_RANGE_SIZE", 10000)),
 		BackfillFloor:     int64(r.intVal("CRAWL_BACKFILL_FLOOR", 0)),
+		MaxIndexed:        int64(r.intVal("SAUCEDUST_MAX_INDEXED", 0)),
 
 		Concurrency:    r.intVal("CRAWL_CONCURRENCY", 4),
 		MinConcurrency: r.intVal("CRAWL_MIN_CONCURRENCY", 1),
@@ -220,6 +222,9 @@ func (c *Config) validate() error {
 	}
 	if c.BackfillFloor < 0 {
 		return fmt.Errorf("CRAWL_BACKFILL_FLOOR는 0 이상이어야 합니다")
+	}
+	if c.MaxIndexed < 0 {
+		return fmt.Errorf("SAUCEDUST_MAX_INDEXED는 0 이상이어야 합니다")
 	}
 	if c.ThumbSize < 64 {
 		return fmt.Errorf("THUMB_SIZE는 64 이상이어야 합니다")

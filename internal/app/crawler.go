@@ -22,6 +22,17 @@ type CrawlerConfig struct {
 	BaseRangeSize   int64
 	RetryBatch      int
 	Adaptive        bool
+	// MaxIndexed는 색인 전체가 담을 수 있는 장수입니다. 0이면 재지 않습니다.
+	//
+	// MaxImages와 다릅니다. 저쪽은 이번 실행에서 몇 장 저장했는지를 보고
+	// 새 노드를 확인할 때 씁니다. 이쪽은 저장소에 이미 들어 있는 전체를
+	// 보고, 메모리가 감당할 수 있는 선을 넘지 않게 막습니다.
+	//
+	// 여러 노드가 같은 저장소에 넣으므로 각자 제 메모리를 보고 판단하면
+	// 틀립니다. 한계는 중앙의 Qdrant 것이지 작업 노드 것이 아닙니다.
+	// 그래서 노드마다 같은 값을 두고 공유 저장소의 수를 봅니다.
+	MaxIndexed int64
+
 	// BackfillFloor는 과거로 내려가는 하한입니다. 이 번호보다 작은 게시물은
 	// 아예 보지 않습니다. 0이면 1번까지 내려갑니다.
 	//
@@ -55,12 +66,22 @@ type Crawler struct {
 	// 뜻이 다르기 때문입니다.
 	saved atomic.Int64
 	stop  context.CancelFunc
+
+	counter   IndexCounter
+	full      atomic.Bool
+	lastCount atomic.Int64
+	countedAt atomic.Int64
+}
+
+// IndexCounter는 저장소에 지금 몇 장 들어 있는지 셉니다.
+type IndexCounter interface {
+	CountImages(ctx context.Context) (int64, error)
 }
 
 // Saved는 이번 실행에서 저장한 이미지 수입니다.
 func (c *Crawler) Saved() int64 { return c.saved.Load() }
 
-func NewCrawler(cfg CrawlerConfig, source SourceClient, lease LeaseRepository, indexer *Indexer, log *slog.Logger) (*Crawler, error) {
+func NewCrawler(cfg CrawlerConfig, source SourceClient, lease LeaseRepository, indexer *Indexer, counter IndexCounter, log *slog.Logger) (*Crawler, error) {
 	switch {
 	case source == nil:
 		return nil, errors.New("수집 대상 클라이언트가 없습니다")
@@ -68,6 +89,8 @@ func NewCrawler(cfg CrawlerConfig, source SourceClient, lease LeaseRepository, i
 		return nil, errors.New("임대 저장소가 없습니다")
 	case indexer == nil:
 		return nil, errors.New("인덱서가 없습니다")
+	case cfg.MaxIndexed > 0 && counter == nil:
+		return nil, errors.New("담을 장수를 정했는데 세는 것이 없습니다")
 	}
 
 	if cfg.PollEvery <= 0 {
@@ -85,7 +108,8 @@ func NewCrawler(cfg CrawlerConfig, source SourceClient, lease LeaseRepository, i
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Crawler{cfg: cfg, source: source, lease: lease, indexer: indexer, log: log}, nil
+	return &Crawler{cfg: cfg, source: source, lease: lease, indexer: indexer,
+		counter: counter, log: log}, nil
 }
 
 func (c *Crawler) Run(ctx context.Context) error {
@@ -95,11 +119,16 @@ func (c *Crawler) Run(ctx context.Context) error {
 
 	// 상한이 있으면 다 채웠을 때 스스로 멈춥니다.
 	// 작업자들이 같은 신호를 보도록 여기서 한 번만 감쌉니다.
-	if c.cfg.MaxImages > 0 {
+	if c.cfg.MaxImages > 0 || c.cfg.MaxIndexed > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithCancel(ctx)
 		defer cancel()
 		c.stop = cancel
+	}
+
+	// 이미 차 있으면 한 장도 더 받지 않습니다.
+	if c.atCapacity(ctx) {
+		return nil
 	}
 
 	var wg sync.WaitGroup
@@ -152,6 +181,10 @@ func (c *Crawler) runCatchup(ctx context.Context) {
 }
 
 func (c *Crawler) catchupOnce(ctx context.Context) error {
+	if c.atCapacity(ctx) {
+		return nil
+	}
+
 	watermark, err := c.lease.HighWatermark(ctx, c.cfg.SourceSite, c.cfg.ScopeKey)
 	if err != nil {
 		return err
@@ -191,6 +224,10 @@ func (c *Crawler) runBackfill(ctx context.Context) {
 
 	for {
 		if ctx.Err() != nil {
+			return
+		}
+
+		if c.atCapacity(ctx) {
 			return
 		}
 

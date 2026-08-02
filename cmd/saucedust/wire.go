@@ -292,9 +292,10 @@ func (r *nodeRuntime) newCrawler(ctx context.Context, models []domain.EmbeddingM
 		BackfillWorkers: r.cfg.BackfillWorkers,
 		BaseRangeSize:   r.cfg.BackfillRangeSize,
 		BackfillFloor:   r.cfg.BackfillFloor,
+		MaxIndexed:      r.cfg.MaxIndexed,
 		Adaptive:        r.cfg.Adaptive,
 		MaxImages:       maxImages,
-	}, source, r.store, indexer, r.log)
+	}, source, r.store, indexer, r.store, r.log)
 	if err != nil {
 		return nil, nil, nil, err
 	}

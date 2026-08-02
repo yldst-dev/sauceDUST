@@ -171,7 +171,7 @@ func newCrawler(t *testing.T, cfg CrawlerConfig, source SourceClient, lease Leas
 		t.Fatalf("인덱서 생성 실패: %v", err)
 	}
 
-	crawler, err := NewCrawler(cfg, source, lease, indexer, quietLogger())
+	crawler, err := NewCrawler(cfg, source, lease, indexer, nil, quietLogger())
 	if err != nil {
 		t.Fatalf("크롤러 생성 실패: %v", err)
 	}

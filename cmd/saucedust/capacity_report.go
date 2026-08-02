@@ -1,0 +1,64 @@
+package main
+
+import (
+	"log/slog"
+	"strconv"
+
+	"saucedust/internal/app"
+	"saucedust/internal/domain"
+)
+
+// 담을 수 있는 장수를 알려 줍니다.
+//
+// 상한을 두지 않으면 어느 순간 Qdrant가 OOM으로 죽습니다. 서서히 느려지다
+// 알려 주는 것이 아니라 한 번에 죽고, 다시 띄워도 컬렉션을 여는 것 자체가
+// 한도를 넘어 또 죽습니다. 지우는 것 말고 되살릴 방법이 없습니다.
+//
+// 그래서 사용자가 계산해서 넣기를 기다리지 않고, 이 컴퓨터 메모리로 몇 장이
+// 들어가는지 시작할 때 알려 줍니다.
+func reportCapacity(rt *nodeRuntime, models []domain.EmbeddingModel) {
+	sizes := make([]int, 0, len(models))
+	for _, m := range models {
+		sizes = append(sizes, m.VectorSize)
+	}
+	perImage := app.IndexBytesPerImage(sizes)
+	if perImage <= 0 {
+		return
+	}
+
+	if rt.cfg.MaxIndexed > 0 {
+		rt.log.Info("담을 장수를 정해 두었습니다",
+			slog.Int64("상한", rt.cfg.MaxIndexed),
+			slog.Int64("장당 메모리 바이트", perImage),
+			slog.String("필요한 메모리", humanBytes(rt.cfg.MaxIndexed*perImage)))
+		return
+	}
+
+	total := totalMemoryBytes()
+	if total <= 0 {
+		rt.log.Warn("담을 장수를 정하지 않았습니다. 차면 Qdrant가 죽습니다",
+			slog.Int64("장당 메모리 바이트", perImage),
+			slog.String("정하려면", "SAUCEDUST_MAX_INDEXED"))
+		return
+	}
+
+	fits := app.ImageCapacity(qdrantShareBytes(total), sizes)
+	rt.log.Warn("담을 장수를 정하지 않았습니다. 차면 Qdrant가 죽습니다",
+		slog.String("이 컴퓨터 메모리", humanBytes(total)),
+		slog.Int64("들어갈 만한 장수", fits),
+		slog.String("정하려면", "SAUCEDUST_MAX_INDEXED"))
+}
+
+func humanBytes(n int64) string {
+	const unit = 1 << 10
+	if n < unit {
+		return strconv.FormatInt(n, 10) + " B"
+	}
+	value, exp := float64(n), 0
+	for value >= unit && exp < 4 {
+		value /= unit
+		exp++
+	}
+	return strconv.FormatFloat(value, 'f', 1, 64) + " " +
+		[...]string{"B", "KB", "MB", "GB", "TB"}[exp]
+}

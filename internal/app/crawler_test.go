@@ -366,3 +366,105 @@ func TestRetryDelayGrows(t *testing.T) {
 		}
 	}
 }
+
+// 정한 만큼 모으면 스스로 멈춰야 합니다.
+// 새 노드가 도는지 확인하려고 끝없이 도는 것을 띄웠다가 손으로 죽이면,
+// 어디까지 갔는지도 얼마나 걸렸는지도 남지 않습니다.
+func TestCrawlerStopsAtLimit(t *testing.T) {
+	cfg := baseConfig()
+	cfg.MaxImages = 20
+	crawler, _ := newCrawler(t, cfg, &rangeSource{latest: 60}, &fakeLease{frontier: 61})
+
+	// Run이 감싸는 취소 함수를 흉내 냅니다.
+	var stopped bool
+	crawler.stop = func() { stopped = true }
+
+	crawler.recordThroughput(8, time.Second)
+	if stopped {
+		t.Fatal("8건에서 멈췄습니다")
+	}
+	if got := crawler.Saved(); got != 8 {
+		t.Errorf("%d건이라고 합니다", got)
+	}
+
+	crawler.recordThroughput(12, time.Second)
+	if !stopped {
+		t.Error("20건을 채웠는데 멈추지 않았습니다")
+	}
+	if got := crawler.Saved(); got != 20 {
+		t.Errorf("%d건이라고 합니다. 20이어야 합니다", got)
+	}
+}
+
+// 상한이 없으면 계속 돌아야 합니다. 기본값이 0입니다.
+func TestCrawlerWithoutLimitKeepsGoing(t *testing.T) {
+	crawler, _ := newCrawler(t, baseConfig(), &rangeSource{latest: 60}, &fakeLease{frontier: 61})
+
+	var stopped bool
+	crawler.stop = func() { stopped = true }
+
+	for i := 0; i < 50; i++ {
+		crawler.recordThroughput(100, time.Second)
+	}
+	if stopped {
+		t.Error("상한이 없는데 멈췄습니다")
+	}
+	if got := crawler.Saved(); got != 5000 {
+		t.Errorf("%d건이라고 합니다", got)
+	}
+}
+
+// 상한이 있으면 남은 만큼만 처리해야 합니다.
+// 묶음이 끝난 뒤에만 세면 구간 크기만큼 넘칩니다.
+func TestCrawlerTrimsBatchToRemaining(t *testing.T) {
+	cfg := baseConfig()
+	cfg.MaxImages = 20
+	crawler, _ := newCrawler(t, cfg, &rangeSource{latest: 60}, &fakeLease{frontier: 61})
+
+	if got := crawler.remaining(); got != 20 {
+		t.Fatalf("남은 수가 %d입니다", got)
+	}
+
+	crawler.saved.Store(15)
+	if got := crawler.remaining(); got != 5 {
+		t.Errorf("15건 뒤 남은 수가 %d입니다. 5여야 합니다", got)
+	}
+
+	crawler.saved.Store(25)
+	if got := crawler.remaining(); got != 0 {
+		t.Errorf("상한을 넘긴 뒤 남은 수가 %d입니다. 0이어야 합니다", got)
+	}
+}
+
+func TestCrawlerWithoutLimitHasNoRemaining(t *testing.T) {
+	crawler, _ := newCrawler(t, baseConfig(), &rangeSource{latest: 60}, &fakeLease{frontier: 61})
+	if got := crawler.remaining(); got != -1 {
+		t.Errorf("상한이 없는데 남은 수가 %d입니다", got)
+	}
+}
+
+// 상한을 정하면 그 근처에서 멈춰야 합니다. 크게 넘기면 확인용으로 쓸 수 없습니다.
+func TestCrawlerRunRespectsLimit(t *testing.T) {
+	cfg := baseConfig()
+	cfg.MaxImages = 20
+	cfg.BackfillWorkers = 1
+
+	source := &rangeSource{latest: 600}
+	source.fakeSource.failURL = map[string]error{}
+	crawler, _ := newCrawler(t, cfg, source, &fakeLease{frontier: 601})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	crawler.Run(ctx)
+
+	got := crawler.Saved()
+	if got < 20 {
+		t.Errorf("%d건만 모았습니다. 20건은 채워야 합니다", got)
+	}
+	// 여러 작업자가 동시에 돌므로 조금은 넘을 수 있습니다.
+	// 구간 크기만큼 넘치면 자르는 것이 동작하지 않는 것입니다.
+	if got > 40 {
+		t.Errorf("%d건이나 모았습니다. 상한 20에서 크게 넘쳤습니다", got)
+	}
+	t.Logf("상한 20에 실제 %d건", got)
+}

@@ -17,6 +17,7 @@ import (
 func cmdControl(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("control", flag.ContinueOnError)
 	noCrawl := fs.Bool("no-crawl", false, "수집은 하지 않고 서버 역할만 합니다")
+	limit := fs.Int64("limit", 0, "이만큼 모으면 멈춥니다. 새 노드를 확인할 때 씁니다")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -105,7 +106,7 @@ func cmdControl(ctx context.Context, args []string) error {
 	}
 
 	if !*noCrawl {
-		crawler, chain, limiter, err := rt.newCrawler(ctx, models, embedder, ingest, fleet)
+		crawler, chain, limiter, err := rt.newCrawler(ctx, models, embedder, ingest, fleet, *limit)
 		if err != nil {
 			return err
 		}
@@ -122,6 +123,7 @@ func cmdControl(ctx context.Context, args []string) error {
 // 구간을 임대받아 수집하고, 결과는 중앙 노드로 보냅니다.
 func cmdWorker(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("worker", flag.ContinueOnError)
+	limit := fs.Int64("limit", 0, "이만큼 모으면 멈춥니다. 새 노드를 확인할 때 씁니다")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -169,7 +171,7 @@ func cmdWorker(ctx context.Context, args []string) error {
 	}
 	fleet.SetDevice(info.Device)
 
-	crawler, chain, limiter, err := rt.newCrawler(ctx, models, embedder, sink, fleet)
+	crawler, chain, limiter, err := rt.newCrawler(ctx, models, embedder, sink, fleet, *limit)
 	if err != nil {
 		return err
 	}

@@ -168,6 +168,19 @@ Qdrant로 옮기는 복구용입니다. Qdrant 저장소를 잃었을 때 씁니
 SAUCEDUST_NODE_ROLE=worker SAUCEDUST_CONTROL_URL=http://10.0.0.5:8000 ./saucedust worker
 ```
 
+새 노드가 정말 도는지 확인할 때는 조금만 모아 보고 멈추게 하십시오.
+
+```bash
+./saucedust control -limit 20
+./saucedust worker -limit 20
+```
+
+끝없이 도는 것을 띄웠다가 손으로 죽이면 어디까지 갔는지도 얼마나 걸렸는지도
+남지 않습니다. 상한을 정하면 다 채우는 즉시 스스로 멈추고 로그에 남깁니다.
+
+멈춘 시점에 처리 중이던 구간은 실패로 남지만 재시도가 줄지 않아 다음
+실행에서 다시 배정됩니다. 빠지는 이미지는 없습니다.
+
 대시보드는 중앙 노드의 `SAUCEDUST_CONTROL_BIND` 주소에서 열립니다.
 
 ## 네트워크 경로

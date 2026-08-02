@@ -22,6 +22,12 @@ type CrawlerConfig struct {
 	BaseRangeSize   int64
 	RetryBatch      int
 	Adaptive        bool
+	// MaxImages는 이만큼 저장하면 스스로 멈춥니다. 0이면 끝없이 돕니다.
+	//
+	// 새 노드를 세운 뒤 정말 도는지 확인할 때 씁니다. 확인하려고 끝없이
+	// 도는 것을 띄웠다가 손으로 죽이면, 어디까지 갔는지도 얼마나 걸렸는지도
+	// 남지 않습니다.
+	MaxImages int64
 }
 
 // Crawler는 세 가지 일을 동시에 돌립니다.
@@ -36,7 +42,16 @@ type Crawler struct {
 
 	throughput atomic.Uint64
 	elapsed    atomic.Uint64
+
+	// saved는 이번 실행에서 저장한 수입니다. MaxImages와 견줍니다.
+	// throughput과 나눠 두는 이유는 그쪽이 구간 크기를 정하는 데 쓰여
+	// 뜻이 다르기 때문입니다.
+	saved atomic.Int64
+	stop  context.CancelFunc
 }
+
+// Saved는 이번 실행에서 저장한 이미지 수입니다.
+func (c *Crawler) Saved() int64 { return c.saved.Load() }
 
 func NewCrawler(cfg CrawlerConfig, source SourceClient, lease LeaseRepository, indexer *Indexer, log *slog.Logger) (*Crawler, error) {
 	switch {
@@ -69,6 +84,15 @@ func NewCrawler(cfg CrawlerConfig, source SourceClient, lease LeaseRepository, i
 func (c *Crawler) Run(ctx context.Context) error {
 	if err := c.bootstrap(ctx); err != nil {
 		return err
+	}
+
+	// 상한이 있으면 다 채웠을 때 스스로 멈춥니다.
+	// 작업자들이 같은 신호를 보도록 여기서 한 번만 감쌉니다.
+	if c.cfg.MaxImages > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		defer cancel()
+		c.stop = cancel
 	}
 
 	var wg sync.WaitGroup
@@ -284,7 +308,28 @@ func (c *Crawler) reschedule(ctx context.Context, item domain.PostRetry, cause e
 }
 
 func (c *Crawler) index(ctx context.Context, posts []domain.SourcePost) (BatchReport, error) {
+	// 상한이 있으면 남은 만큼만 넘깁니다. 묶음이 끝난 뒤에 세면 한 묶음
+	// 크기만큼 넘칩니다. 구간이 50개면 20을 시켜도 50을 받아 옵니다.
+	// 여기서 자르면 필요 없는 것을 내려받지도 않습니다.
+	if left := c.remaining(); left >= 0 && int64(len(posts)) > left {
+		posts = posts[:left]
+	}
+	if len(posts) == 0 {
+		return BatchReport{}, nil
+	}
 	return c.indexer.IndexBatch(ctx, posts)
+}
+
+// remaining은 상한까지 남은 수입니다. 상한이 없으면 -1입니다.
+func (c *Crawler) remaining() int64 {
+	if c.cfg.MaxImages <= 0 {
+		return -1
+	}
+	left := c.cfg.MaxImages - c.saved.Load()
+	if left < 0 {
+		return 0
+	}
+	return left
 }
 
 func (c *Crawler) enqueueFailures(ctx context.Context, failed []int64) {
@@ -304,6 +349,15 @@ func (c *Crawler) recordThroughput(saved int, took time.Duration) {
 	}
 	c.throughput.Add(uint64(saved))
 	c.elapsed.Add(uint64(took.Seconds()))
+
+	// 상한을 채웠으면 멈춥니다. 이미 돌고 있는 묶음은 끝까지 가므로
+	// 실제 저장 수는 상한을 조금 넘을 수 있습니다.
+	total := c.saved.Add(int64(saved))
+	if c.cfg.MaxImages > 0 && total >= c.cfg.MaxImages && c.stop != nil {
+		c.log.Info("정한 만큼 모았습니다. 멈춥니다",
+			slog.Int64("모은 수", total), slog.Int64("상한", c.cfg.MaxImages))
+		c.stop()
+	}
 }
 
 func (c *Crawler) rangeSize() int64 {

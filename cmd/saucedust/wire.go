@@ -260,7 +260,7 @@ func (r *nodeRuntime) newSink(ctx context.Context, models []domain.EmbeddingMode
 }
 
 // newCrawler는 수집에 필요한 모든 조각을 엮습니다.
-func (r *nodeRuntime) newCrawler(ctx context.Context, models []domain.EmbeddingModel, embedder app.Embedder, sink app.VectorSink, fleet *app.Fleet) (*app.Crawler, *netpath.Chain, *app.Limiter, error) {
+func (r *nodeRuntime) newCrawler(ctx context.Context, models []domain.EmbeddingModel, embedder app.Embedder, sink app.VectorSink, fleet *app.Fleet, maxImages int64) (*app.Crawler, *netpath.Chain, *app.Limiter, error) {
 	chain, err := r.newNetChain()
 	if err != nil {
 		return nil, nil, nil, err
@@ -292,6 +292,7 @@ func (r *nodeRuntime) newCrawler(ctx context.Context, models []domain.EmbeddingM
 		BackfillWorkers: r.cfg.BackfillWorkers,
 		BaseRangeSize:   r.cfg.BackfillRangeSize,
 		Adaptive:        r.cfg.Adaptive,
+		MaxImages:       maxImages,
 	}, source, r.store, indexer, r.log)
 	if err != nil {
 		return nil, nil, nil, err

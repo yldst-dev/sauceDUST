@@ -22,16 +22,25 @@ TARGETS=(
 
 # OUT을 밖에서 넘길 수 있으므로 그대로 지우면 안 됩니다.
 # OUT=$HOME 한 번이면 홈이 날아갑니다.
-case "$OUT" in
+#
+# 저장소 안이면 그냥 지웁니다. 밖이면 이 스크립트가 만든 표식이 있어야
+# 합니다. 표식은 처음 만들 때 남깁니다.
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+ABS_OUT="$(cd "$(dirname "$OUT")" 2>/dev/null && pwd)/$(basename "$OUT")"
+
+case "$ABS_OUT" in
   ""|"/"|"$HOME"|"$HOME/")
-    echo "지울 수 없는 경로입니다: ${OUT:-비어 있음}" >&2
+    echo "지울 수 없는 경로입니다: $OUT" >&2
     exit 1
     ;;
+  "$REPO"/*) ;;
+  *)
+    if [ -e "$ABS_OUT" ] && [ ! -f "$ABS_OUT/.saucedust-build" ]; then
+      echo "$OUT는 이 스크립트가 만든 폴더가 아닙니다. 직접 지우고 다시 부르십시오." >&2
+      exit 1
+    fi
+    ;;
 esac
-if [ -e "$OUT" ] && [ ! -f "$OUT/.saucedust-build" ]; then
-  echo "$OUT는 이 스크립트가 만든 폴더가 아닙니다. 직접 지우고 다시 부르십시오." >&2
-  exit 1
-fi
 
 rm -rf "$OUT"
 mkdir -p "$OUT"

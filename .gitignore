@@ -1,27 +1,24 @@
 .DS_Store
+
+# 설정. 본보기는 internal/config/env.example에 있습니다.
 .env
 .env.*
-!.env.example
-.qdrant-initialized
-.sauce-proxy-bandwidth.json
 
-/target/
+# 빌드 결과
+/saucedust
 /dist/
-/snapshots/
-/vpntest/
 
-danbooru_records*.json
-
-__pycache__/
-*.py[cod]
+# Python
 .venv/
 venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
 
+# 실행 중 생기는 것
 *.log
 *.pid
 *.sock
 *.tmp
-
-# Go
-/saucedust
-/dist/

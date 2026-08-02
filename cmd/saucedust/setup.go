@@ -13,6 +13,8 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"saucedust/internal/config"
 )
 
 // setupAssets는 워커 실행에 필요한 파일을 바이너리 안에 넣어 둡니다.
@@ -179,15 +181,9 @@ func ensureEnvFile(root string) error {
 		return nil
 	}
 
-	source := filepath.Join(root, "internal", "config", "env.example")
-	// 본보기 파일은 저장소 안 고정 위치입니다.
-	data, err := os.ReadFile(source) // #nosec G304 G703 -- 저장소 내 고정 경로입니다
-	if err != nil {
-		return fmt.Errorf("설정 본보기를 읽지 못했습니다: %w", err)
-	}
 	// 경로는 작업 폴더에서 만들어집니다. 바깥 입력이 닿지 않습니다.
 	// 자격 증명이 들어가는 파일이라 본인만 읽을 수 있게 둡니다.
-	if err := os.WriteFile(target, data, 0o600); err != nil { // #nosec G703 -- 작업 폴더 기준 고정 경로입니다
+	if err := os.WriteFile(target, []byte(config.Example), 0o600); err != nil { // #nosec G703 -- 작업 폴더 기준 고정 경로입니다
 		return fmt.Errorf(".env를 만들지 못했습니다: %w", err)
 	}
 

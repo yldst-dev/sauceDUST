@@ -52,26 +52,38 @@ func (s *reembedStore) CountThumbsMissingVector(context.Context, string) (int64,
 }
 
 // 커서 뒤의 것만 돌려줍니다. 실제 SQL과 같은 규칙이라야 시험이 의미가 있습니다.
+//
+// 진짜 구현처럼 두 단계로 흉내 냅니다. 먼저 커서 뒤의 한 묶음을 조건 없이
+// 자르고, 그다음 벡터가 없는 것만 남깁니다. 그래서 걸러진 결과가 비어도
+// 커서는 나아갑니다. 이 차이를 흉내 내지 않으면 시험이 실제와 어긋납니다.
 func (s *reembedStore) ThumbsMissingVector(_ context.Context, _ string,
-	afterID int64, limit int) ([]domain.ThumbRef, error) {
+	afterID int64, limit int) ([]domain.ThumbRef, int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pages++
 
-	var out []domain.ThumbRef
+	var page []domain.ThumbRef
 	for _, ref := range s.refs {
 		if ref.ImageID <= afterID {
 			continue
 		}
-		if s.hasVector(ref.ImageID) {
-			continue
-		}
-		out = append(out, ref)
-		if len(out) >= limit {
+		page = append(page, ref)
+		if len(page) >= limit {
 			break
 		}
 	}
-	return out, nil
+	if len(page) == 0 {
+		return nil, 0, nil
+	}
+	next := page[len(page)-1].ImageID
+
+	var out []domain.ThumbRef
+	for _, ref := range page {
+		if !s.hasVector(ref.ImageID) {
+			out = append(out, ref)
+		}
+	}
+	return out, next, nil
 }
 
 func (s *reembedStore) hasVector(id int64) bool {
@@ -321,6 +333,39 @@ func TestReembedResumes(t *testing.T) {
 	}
 	if result.Done != 15 {
 		t.Errorf("%d건 했습니다. 남은 15건만 해야 합니다", result.Done)
+	}
+}
+
+// 이미 계산된 것만 들어 있는 묶음을 만나도 멈추면 안 됩니다.
+// 걸러진 결과가 비었다고 끝난 것으로 보면 그 뒤에 남은 것을 통째로 놓칩니다.
+func TestReembedSkipsFullyDonePageAndKeepsGoing(t *testing.T) {
+	reembed, store, _, _, _, model := newReembedFixture(t, 30)
+
+	// 가운데 한 묶음(11~20)만 이미 되어 있습니다.
+	for i := 11; i <= 20; i++ {
+		store.saved = append(store.saved, domain.StoredVector{
+			ImageID: int64(i), ModelID: model.ID, Values: []float32{1, 0, 0, 0},
+		})
+	}
+
+	result, err := reembed.Run(context.Background(), model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Done != 20 {
+		t.Fatalf("%d건 했습니다. 1~10과 21~30을 합쳐 20건이어야 합니다", result.Done)
+	}
+
+	for _, want := range []int64{1, 10, 21, 30} {
+		found := false
+		for _, v := range store.saved {
+			if v.ImageID == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("이미지 %d를 건너뛰었습니다", want)
+		}
 	}
 }
 

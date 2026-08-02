@@ -72,6 +72,12 @@ CREATE INDEX IF NOT EXISTS idx_images_phash ON images (phash);
 CREATE INDEX IF NOT EXISTS idx_images_rating ON images (rating);
 CREATE INDEX IF NOT EXISTS idx_images_no_thumb ON images (id) WHERE thumb_path IS NULL;
 
+-- reembed가 훑는 대상입니다. 모델을 바꾸면 축소본이 있는 이미지를 전부
+-- 다시 계산하는데, 조건 없이 훑으면 1천만 행을 한 줄씩 봐야 합니다.
+-- 조건을 그대로 담은 부분 색인이라야 PostgreSQL이 이 색인을 씁니다.
+CREATE INDEX IF NOT EXISTS idx_images_with_thumb
+    ON images (id) WHERE thumb_path IS NOT NULL AND thumb_path <> '';
+
 CREATE TABLE IF NOT EXISTS image_vectors (
     image_id   BIGINT      NOT NULL REFERENCES images (id) ON DELETE CASCADE,
     model_id   TEXT        NOT NULL REFERENCES embedding_models (id),

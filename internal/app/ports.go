@@ -53,7 +53,11 @@ type ImageRepository interface {
 	CountImages(ctx context.Context) (int64, error)
 	// ThumbsMissingVector는 축소본은 있는데 이 모델의 벡터가 없는 이미지를
 	// 커서 방식으로 냅니다. 모델을 바꿨을 때 다시 계산할 대상입니다.
-	ThumbsMissingVector(ctx context.Context, modelID string, afterID int64, limit int) ([]domain.ThumbRef, error)
+	//
+	// 두 번째 반환값은 다음에 넘길 자리입니다. 0이면 끝입니다.
+	// 첫 번째가 비어 있어도 0이 아니면 계속 넘겨야 합니다. 그 묶음이 전부
+	// 이미 계산된 것이었을 뿐 뒤에 남아 있을 수 있습니다.
+	ThumbsMissingVector(ctx context.Context, modelID string, afterID int64, limit int) ([]domain.ThumbRef, int64, error)
 	CountThumbsMissingVector(ctx context.Context, modelID string) (int64, error)
 }
 

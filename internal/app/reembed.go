@@ -111,14 +111,19 @@ func (r *Reembed) Run(ctx context.Context, model domain.EmbeddingModel) (Reembed
 			return out, err
 		}
 
-		refs, err := r.images.ThumbsMissingVector(ctx, model.ID, cursor, r.batchSize)
+		refs, next, err := r.images.ThumbsMissingVector(ctx, model.ID, cursor, r.batchSize)
 		if err != nil {
 			return out, err
 		}
-		if len(refs) == 0 {
+		// next가 0이라야 끝입니다. refs가 비었다고 멈추면, 이미 계산된
+		// 묶음 하나를 만났을 뿐인데 뒤에 남은 것을 놓칩니다.
+		if next == 0 {
 			break
 		}
-		cursor = refs[len(refs)-1].ImageID
+		cursor = next
+		if len(refs) == 0 {
+			continue
+		}
 
 		done, missing, failed, err := r.batch(ctx, model, refs)
 		out.Done += done

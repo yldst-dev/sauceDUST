@@ -172,8 +172,8 @@ func (f *fakeImages) ImagesByIDs(context.Context, []int64) (map[int64]domain.Ima
 
 func (f *fakeImages) CountImages(context.Context) (int64, error) { return 0, nil }
 
-func (f *fakeImages) ThumbsMissingVector(context.Context, string, int64, int) ([]domain.ThumbRef, error) {
-	return nil, nil
+func (f *fakeImages) ThumbsMissingVector(context.Context, string, int64, int) ([]domain.ThumbRef, int64, error) {
+	return nil, 0, nil
 }
 
 func (f *fakeImages) CountThumbsMissingVector(context.Context, string) (int64, error) {

@@ -61,8 +61,8 @@ func (s *stubImages) ImagesByIDs(_ context.Context, ids []int64) (map[int64]doma
 
 func (s *stubImages) CountImages(context.Context) (int64, error) { return 0, nil }
 
-func (s *stubImages) ThumbsMissingVector(context.Context, string, int64, int) ([]domain.ThumbRef, error) {
-	return nil, nil
+func (s *stubImages) ThumbsMissingVector(context.Context, string, int64, int) ([]domain.ThumbRef, int64, error) {
+	return nil, 0, nil
 }
 
 func (s *stubImages) CountThumbsMissingVector(context.Context, string) (int64, error) {

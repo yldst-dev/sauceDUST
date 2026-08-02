@@ -313,40 +313,75 @@ WHERE NOT EXISTS (
 // 축소본은 남겨 두므로 Danbooru를 다시 훑지 않아도 됩니다. 이 조회가 그
 // 대상을 찾아 줍니다.
 //
-// 커서로 넘깁니다. OFFSET을 쓰면 뒤로 갈수록 앞부분을 매번 다시 세게 되어
-// 1천만 행에서는 끝까지 가지 못합니다.
+// nextCursor는 다음에 넘길 자리입니다. 0이면 더 볼 것이 없다는 뜻입니다.
+// 걸러진 결과가 비어 있어도 nextCursor가 0이 아니면 계속 넘겨야 합니다.
+// 이 묶음이 전부 이미 계산된 것이었을 뿐 뒤에 남아 있을 수 있습니다.
+//
+// 두 번에 나눠 묻습니다. 한 문장으로 쓰면 PostgreSQL이 병합 안티 조인을
+// 골라, 한 묶음을 얻으려고 이미 계산된 벡터를 전부 훑습니다. 1백만 행에서
+// 재보니 256건을 찾는 데 47만 행을 읽고 60밀리초가 걸렸습니다. 게다가 뒤로
+// 갈수록 훑을 것이 늘어 전체가 제곱으로 커집니다. 나눠 물으면 색인으로
+// 256번만 찔러 보므로 2밀리초이고 묶음마다 일정합니다.
 func (s *Store) ThumbsMissingVector(ctx context.Context, modelID string,
-	afterID int64, limit int) ([]domain.ThumbRef, error) {
+	afterID int64, limit int) (refs []domain.ThumbRef, nextCursor int64, err error) {
 	if limit <= 0 {
 		limit = 200
 	}
 
+	// 1단계. 축소본이 있는 것만 순서대로 한 묶음 가져옵니다.
+	// 조건이 부분 색인과 같아야 색인을 씁니다.
 	rows, err := s.pool.Query(ctx, `
 SELECT id, source_site, source_post_id, thumb_path
 FROM images
-WHERE id > $1
-  AND thumb_path IS NOT NULL AND thumb_path <> ''
-  AND NOT EXISTS (
-      SELECT 1 FROM image_vectors v
-      WHERE v.image_id = images.id AND v.model_id = $2
-  )
+WHERE id > $1 AND thumb_path IS NOT NULL AND thumb_path <> ''
 ORDER BY id
-LIMIT $3`, afterID, modelID, limit)
+LIMIT $2`, afterID, limit)
 	if err != nil {
-		return nil, fmt.Errorf("다시 계산할 이미지를 찾지 못했습니다: %w", err)
+		return nil, 0, fmt.Errorf("다시 계산할 이미지를 찾지 못했습니다: %w", err)
 	}
 	defer rows.Close()
 
-	var out []domain.ThumbRef
+	page := make([]domain.ThumbRef, 0, limit)
 	for rows.Next() {
 		var item domain.ThumbRef
 		if err := rows.Scan(&item.ImageID, &item.SourceSite,
 			&item.SourcePostID, &item.ThumbPath); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
-		out = append(out, item)
+		page = append(page, item)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if len(page) == 0 {
+		return nil, 0, nil
+	}
+	nextCursor = page[len(page)-1].ImageID
+
+	// 2단계. 그중 이 모델의 벡터가 없는 것만 남깁니다.
+	// 묶음이 작아 기본키로 한 건씩 찔러 보는 것이 가장 빠릅니다.
+	ids := make([]int64, 0, len(page))
+	for _, item := range page {
+		ids = append(ids, item.ImageID)
+	}
+	missing, err := s.VectorsMissing(ctx, ids, modelID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(missing) == 0 {
+		return nil, nextCursor, nil
+	}
+
+	want := make(map[int64]struct{}, len(missing))
+	for _, id := range missing {
+		want[id] = struct{}{}
+	}
+	for _, item := range page {
+		if _, ok := want[item.ImageID]; ok {
+			refs = append(refs, item)
+		}
+	}
+	return refs, nextCursor, nil
 }
 
 // CountThumbsMissingVector는 남은 일이 얼마나 되는지 셉니다.

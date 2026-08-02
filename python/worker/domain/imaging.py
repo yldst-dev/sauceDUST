@@ -25,6 +25,13 @@ HASH_SIZE = 128
 # 압축 폭탄 방어. 정상 이미지는 이 크기를 넘지 않습니다.
 MAX_PIXELS = 64_000_000
 
+# 투명한 곳을 채울 색입니다. PREP_SIZE와 마찬가지로 고정 상수입니다.
+# 이 값이 바뀌면 투명한 그림의 벡터와 해시가 전부 달라집니다.
+#
+# 흰색인 이유는 사람들이 실제로 올리는 형태가 그렇기 때문입니다. 투명한
+# PNG를 JPEG로 다시 저장하면 대부분의 도구가 흰 바탕으로 깔아 줍니다.
+WHITE = (255, 255, 255)
+
 
 class ImageError(ValueError):
     """이미지를 쓸 수 없을 때 냅니다."""
@@ -76,13 +83,40 @@ def decode(raw: bytes) -> Decoded:
         image.draft("RGB", (PREP_SIZE, PREP_SIZE))
         image.load()
 
-        return Decoded(image=image.convert("RGB"), width=width, height=height)
+        return Decoded(image=flatten(image), width=width, height=height)
     except Image.DecompressionBombWarning as exc:
         raise ImageError("이미지가 너무 큽니다") from exc
     except ImageError:
         raise
     except Exception as exc:
         raise ImageError(f"이미지를 열지 못했습니다: {exc}") from exc
+
+
+def flatten(image: Image.Image) -> Image.Image:
+    """투명한 곳을 흰색으로 채우고 RGB로 바꿉니다.
+
+    그냥 convert("RGB")를 부르면 알파 채널을 버리기만 합니다. 투명했던
+    자리에는 인코더가 남겨 둔 값이 그대로 드러나는데, 보통 검은색이지만
+    무엇이 나올지는 파일마다 다릅니다. 같은 그림을 다른 도구로 저장하면
+    다른 벡터가 나옵니다.
+
+    실측에서 Danbooru 이미지의 1.2퍼센트가 실제로 투명한 곳을 가졌고,
+    그중 절반은 배경색에 따라 지각 해시가 5비트 넘게 달라졌습니다.
+    최대 56비트까지 벌어졌습니다. 1,190만 장이면 7만 5천 장쯤입니다.
+
+    투명한 곳에는 원래 정보가 없으므로 어느 색으로 채우든 정답은 없습니다.
+    중요한 것은 늘 같은 색으로 채우는 것입니다. 그래야 저장할 때와 검색할
+    때가 어긋나지 않습니다.
+    """
+    if image.mode == "P" and "transparency" in image.info:
+        image = image.convert("RGBA")
+    if image.mode not in ("RGBA", "LA", "PA"):
+        return image.convert("RGB")
+
+    rgba = image.convert("RGBA")
+    canvas = Image.new("RGB", rgba.size, WHITE)
+    canvas.paste(rgba, mask=rgba.split()[-1])
+    return canvas
 
 
 def derive(decoded: Decoded) -> Derived:

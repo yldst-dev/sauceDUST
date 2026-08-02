@@ -51,12 +51,20 @@ func Normalize(values []float32) {
 	for _, v := range values {
 		sum += float64(v) * float64(v)
 	}
-	if sum == 0 {
+	// 길이가 0이면 방향이 없어 맞출 수가 없습니다.
+	// 무한대나 NaN이면 이미 망가진 벡터입니다. 여기서 0으로 만들어 버리면
+	// 멀쩡한 영벡터처럼 보이게 되므로 그대로 두고 ValidateVectors가 잡게 합니다.
+	if sum == 0 || math.IsInf(sum, 0) || math.IsNaN(sum) {
 		return
 	}
-	inv := float32(1 / math.Sqrt(sum))
+
+	// 나눗셈과 곱셈을 float64로 하고 마지막에만 float32로 돌립니다.
+	// 값이 아주 작으면 1을 길이로 나눈 값이 float32 범위를 넘습니다.
+	// 그 상태로 float32에 담으면 무한대가 되고, 곱하는 순간 벡터 전체가
+	// 무한대가 됩니다. 결과는 길이 1이라 float32에 언제나 들어갑니다.
+	inv := 1 / math.Sqrt(sum)
 	for i := range values {
-		values[i] *= inv
+		values[i] = float32(float64(values[i]) * inv)
 	}
 }
 

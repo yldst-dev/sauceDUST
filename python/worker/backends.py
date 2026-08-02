@@ -64,15 +64,37 @@ class TorchEncoder:
 
     def _forward(self, tensor: torch.Tensor) -> torch.Tensor:
         if self._features is not None:
-            return self._features(pixel_values=tensor)
+            return as_vectors(self._features(pixel_values=tensor))
+        return as_vectors(self._model(tensor))
 
-        out = self._model(tensor)
-        if hasattr(out, "pooler_output") and out.pooler_output is not None:
-            return out.pooler_output
-        if hasattr(out, "last_hidden_state"):
-            # DINOv2는 CLS 토큰을 이미지 대표값으로 씁니다.
-            return out.last_hidden_state[:, 0]
+
+def as_vectors(out: object) -> torch.Tensor:
+    """모델 출력에서 이미지 한 장당 벡터 하나를 꺼냅니다.
+
+    transformers 판에 따라 텐서를 그대로 주기도 하고 감싼 객체를 주기도 합니다.
+    5.x에서 CLIP과 SigLIP의 get_image_features가 텐서 대신 객체를 돌려주도록
+    바뀌었고, 그 탓에 semantic 모델이 통째로 동작하지 않았습니다. 모델을 올릴
+    때는 아무 문제가 없고 이미지를 넣는 순간에야 터지므로 알아채기 어렵습니다.
+    어느 형태가 오든 같게 다룹니다.
+    """
+    if isinstance(out, torch.Tensor):
         return out
+
+    # pooler_output이 그 모델이 정한 대표값입니다.
+    # CLIP은 공용 공간으로 투영한 512차원, SigLIP과 DINOv2는 768차원입니다.
+    pooled = getattr(out, "pooler_output", None)
+    if pooled is not None:
+        return pooled
+
+    hidden = getattr(out, "last_hidden_state", None)
+    if hidden is not None:
+        # 첫 토큰(CLS)을 이미지 대표값으로 씁니다.
+        return hidden[:, 0]
+
+    raise BackendError(
+        f"모델 출력에서 벡터를 찾지 못했습니다: {type(out).__name__}. "
+        "transformers 판이 바뀌었을 수 있습니다"
+    )
 
 
 def transformers_backend(spec: ModelSpec, device: str, use_half: bool) -> TorchEncoder:

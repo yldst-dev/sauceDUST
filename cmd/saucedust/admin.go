@@ -479,9 +479,21 @@ func cmdRebuild(ctx context.Context, args []string) error {
 	return nil
 }
 
+// truncate는 표 한 칸에 들어가도록 문자열을 줄입니다.
+//
+// n은 바이트 수입니다. 바이트로 그냥 자르면 한글 한 글자가 중간에서
+// 끊겨 터미널에 깨진 문자가 찍힙니다. 이 프로그램의 오류 메시지는 전부
+// 한국어라 늘 일어나는 일입니다. 글자 경계까지만 담습니다.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	end := 0
+	for i := range s {
+		if i > n {
+			break
+		}
+		end = i
+	}
+	return s[:end] + "…"
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -296,8 +297,14 @@ func yesNo(v bool) string {
 // comma는 큰 숫자에 자릿점을 찍습니다.
 func comma(v int64) string {
 	s := strconv.FormatInt(v, 10)
+
+	// 부호는 자릿수 세기에서 빼 둡니다. 같이 세면 -123이 -,123이 됩니다.
+	sign := ""
+	if strings.HasPrefix(s, "-") {
+		sign, s = "-", s[1:]
+	}
 	if len(s) <= 3 {
-		return s
+		return sign + s
 	}
 
 	var out []byte
@@ -307,7 +314,7 @@ func comma(v int64) string {
 		}
 		out = append(out, digit)
 	}
-	return string(out)
+	return sign + string(out)
 }
 
 func joinComma(parts []string) string {

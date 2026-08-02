@@ -62,13 +62,27 @@ func TestMeasureRealImageSizes(t *testing.T) {
 		}
 	}
 
-	posts, err := client.PostsAfter(ctx, latest-int64(want)*3, "rating:g", want)
-	if err != nil {
-		t.Fatalf("게시물 목록을 받지 못했습니다: %v", err)
+	// Danbooru는 한 번에 200개까지만 줍니다. 필요한 만큼 넘겨 가며 받습니다.
+	var posts []domain.SourcePost
+	cursor := latest - int64(want)*3
+	for len(posts) < want {
+		page, err := client.PostsAfter(ctx, cursor, "rating:g", 200)
+		if err != nil {
+			t.Fatalf("게시물 목록을 받지 못했습니다: %v", err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		posts = append(posts, page...)
+		cursor = page[len(page)-1].PostID
 	}
 	if len(posts) == 0 {
 		t.Fatal("게시물이 하나도 오지 않았습니다")
 	}
+	if len(posts) > want {
+		posts = posts[:want]
+	}
+	t.Logf("게시물 %d건을 받았습니다", len(posts))
 
 	var (
 		sizes    []int

@@ -104,26 +104,22 @@ class Score:
         return 100 * hits / self.total if self.total else 0.0
 
 
-def load_images(folder: Path, limit: int) -> list[Image.Image]:
+def pick_paths(folder: Path, limit: int) -> list[Path]:
+    """쓸 이미지 경로를 고릅니다. 파일은 아직 열지 않습니다.
+
+    후보가 수천 장이 되면 전부 메모리에 올릴 수 없습니다. 8천 장을 512픽셀
+    작업본으로 들고 있으면 6기가가 넘습니다. 필요할 때 한 배치씩 읽습니다.
+    """
     paths = [p for p in sorted(folder.rglob("*")) if p.suffix.lower() in IMAGE_SUFFIXES]
     if not paths:
         raise SystemExit(f"{folder} 아래에 이미지가 없습니다")
 
     random.Random(1234).shuffle(paths)
-    out: list[Image.Image] = []
-    for path in paths:
-        if len(out) >= limit:
-            break
-        try:
-            with Image.open(path) as handle:
-                out.append(handle.convert("RGB"))
-        except Exception as exc:
-            # 측정용 표본이므로 열리지 않는 파일은 건너뜁니다.
-            print(f"  건너뜀 {path.name}: {exc}")
-            continue
-    if len(out) < 10:
-        raise SystemExit(f"쓸 수 있는 이미지가 {len(out)}장뿐입니다")
-    return out
+    if len(paths) > limit:
+        paths = paths[:limit]
+    if len(paths) < 10:
+        raise SystemExit(f"쓸 수 있는 이미지가 {len(paths)}장뿐입니다")
+    return paths
 
 
 def _derive(image: Image.Image) -> imaging.Derived:
@@ -131,51 +127,101 @@ def _derive(image: Image.Image) -> imaging.Derived:
     return imaging.derive(decoded)
 
 
+def _open(path: Path) -> Image.Image | None:
+    try:
+        with Image.open(path) as handle:
+            return handle.convert("RGB")
+    except Exception:
+        # 측정용 표본이므로 열리지 않는 파일은 건너뜁니다.
+        return None
+
+
 def prepared(images: list[Image.Image]) -> list[Image.Image]:
     """실제 워커와 같은 준비 과정을 거칩니다. 그래야 측정이 운영과 일치합니다."""
     return [_derive(image).prep for image in images]
 
 
-def encode_all(encoder: Encoder, images: list[Image.Image], batch: int) -> np.ndarray:
-    chunks = [encoder.encode(images[i:i + batch]) for i in range(0, len(images), batch)]
+def encode_paths(encoder: Encoder, paths: list[Path], batch: int,
+                 transform=None) -> np.ndarray:
+    """경로를 배치 단위로 읽어 인코딩합니다. 읽은 것은 바로 놓아 줍니다."""
+    chunks = []
+    for start in range(0, len(paths), batch):
+        images = []
+        for path in paths[start:start + batch]:
+            image = _open(path)
+            if image is None:
+                # 자리를 비우면 색인이 어긋나므로 검은 그림으로 채웁니다.
+                image = Image.new("RGB", (64, 64))
+            images.append(transform(image) if transform else image)
+        chunks.append(encoder.encode(prepared(images)))
     return np.vstack(chunks)
 
 
-def rank_of_original(gallery: np.ndarray, query: np.ndarray, index: int) -> int:
-    """정답이 몇 등으로 나왔는지 돌려줍니다. 0이면 1등입니다."""
-    order = np.argsort(-(gallery @ query))
-    return int(np.where(order == index)[0][0])
+def hash_paths(paths: list[Path], transform=None) -> np.ndarray:
+    """지각 해시를 uint64 배열로 냅니다. 배열이라야 한꺼번에 비교할 수 있습니다."""
+    out = np.empty(len(paths), dtype=np.uint64)
+    for i, path in enumerate(paths):
+        image = _open(path) or Image.new("RGB", (64, 64))
+        if transform:
+            image = transform(image)
+        out[i] = np.uint64(int(hashing.compute(_derive(image).hash_src).phash, 16))
+    return out
 
 
-def evaluate_model(spec: ModelSpec, originals: list[Image.Image],
+# 64비트 값의 1 개수를 한꺼번에 셉니다. 파이썬 반복으로 8천 x 1천을 돌면
+# 몇 분씩 걸립니다. 바이트별 표를 미리 만들어 두면 배열 연산으로 끝납니다.
+_POPCOUNT = np.array([bin(i).count("1") for i in range(256)], dtype=np.uint8)
+
+
+def hamming_all(gallery: np.ndarray, query: np.uint64) -> np.ndarray:
+    diff = np.bitwise_xor(gallery, query)
+    return _POPCOUNT[diff.view(np.uint8).reshape(-1, 8)].sum(axis=1)
+
+
+def rank_of(scores: np.ndarray, index: int, higher_is_better: bool) -> int:
+    """정답이 몇 등으로 나왔는지 셉니다. 0이면 1등입니다.
+
+    전체를 정렬하지 않고 정답보다 앞선 것만 셉니다. 후보가 많을수록 차이가
+    큽니다. 같은 점수는 정답보다 앞선 것으로 봐서 낮게 잡습니다.
+    """
+    mine = scores[index]
+    if higher_is_better:
+        better = int(np.count_nonzero(scores > mine))
+        tied = int(np.count_nonzero(scores == mine)) - 1
+    else:
+        better = int(np.count_nonzero(scores < mine))
+        tied = int(np.count_nonzero(scores == mine)) - 1
+    return better + tied
+
+
+def evaluate_model(spec: ModelSpec, paths: list[Path], queries: list[int],
                    chosen: device.Device, batch: int) -> dict[str, Score]:
     encoder = backends.build(spec, chosen.name, chosen.use_half)
-    gallery = encode_all(encoder, prepared(originals), batch)
+    gallery = encode_paths(encoder, paths, batch)
 
+    query_paths = [paths[i] for i in queries]
     results: dict[str, Score] = {}
     for name, transform in DEGRADATIONS.items():
         score = Score()
-        queries = encode_all(encoder, prepared([transform(i) for i in originals]), batch)
-        for i in range(len(originals)):
-            score.add(rank_of_original(gallery, queries[i], i))
+        vectors = encode_paths(encoder, query_paths, batch, transform)
+        for slot, index in enumerate(queries):
+            score.add(rank_of(gallery @ vectors[slot], index, higher_is_better=True))
         results[name] = score
     return results
 
 
-def evaluate_phash(originals: list[Image.Image]) -> dict[str, Score]:
+def evaluate_phash(paths: list[Path], queries: list[int]) -> dict[str, Score]:
     """비교 기준선. 지각 해시만으로 얼마나 찾는지 봅니다."""
-    def digest(image: Image.Image) -> int:
-        return int(hashing.compute(_derive(image).hash_src).phash, 16)
-
-    gallery = [digest(image) for image in originals]
+    gallery = hash_paths(paths)
+    query_paths = [paths[i] for i in queries]
 
     results: dict[str, Score] = {}
     for name, transform in DEGRADATIONS.items():
         score = Score()
-        for i, image in enumerate(originals):
-            query = digest(transform(image))
-            distances = [(query ^ candidate).bit_count() for candidate in gallery]
-            score.add(int(np.where(np.argsort(distances) == i)[0][0]))
+        digests = hash_paths(query_paths, transform)
+        for slot, index in enumerate(queries):
+            distances = hamming_all(gallery, digests[slot])
+            score.add(rank_of(distances, index, higher_is_better=False))
         results[name] = score
     return results
 
@@ -198,7 +244,10 @@ def print_table(title: str, results: dict[str, Score], elapsed: float) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="원본 찾기 성능으로 모델을 비교합니다")
     parser.add_argument("--images", required=True, type=Path, help="이미지가 있는 폴더")
-    parser.add_argument("--limit", type=int, default=200, help="쓸 이미지 수")
+    parser.add_argument("--limit", type=int, default=200,
+                        help="후보로 삼을 이미지 수. 이 값이 클수록 어려운 문제입니다")
+    parser.add_argument("--queries", type=int, default=0,
+                        help="그중 몇 장으로 검색해 볼지. 0이면 후보 전부 또는 500장")
     parser.add_argument("--models", type=Path, help="후보 모델 JSON 경로")
     parser.add_argument("--batch", type=int, default=0, help="배치 크기")
     args = parser.parse_args()
@@ -211,17 +260,27 @@ def main() -> None:
     chosen = device.select()
     batch = args.batch or chosen.batch_size
 
-    originals = load_images(args.images, args.limit)
-    print(f"장치 {chosen.name}, 이미지 {len(originals)}장, 배치 {batch}")
+    paths = pick_paths(args.images, args.limit)
+
+    # 후보 수와 질의 수를 나눕니다. 어려움을 정하는 것은 후보 수이고,
+    # 측정에 드는 시간을 정하는 것은 질의 수입니다. 둘을 묶어 두면 후보를
+    # 늘릴수록 시간이 제곱으로 불어나 규모를 키울 수가 없습니다.
+    count = args.queries or min(500, len(paths))
+    count = min(count, len(paths))
+    queries = sorted(random.Random(99).sample(range(len(paths)), count))
+
+    print(f"장치 {chosen.name}, 배치 {batch}")
+    print(f"후보 {len(paths)}장 중 {count}장으로 검색합니다.")
     print("망가뜨린 복사본으로 검색해서 원본이 몇 등에 나오는지 잽니다.")
 
     started = time.time()
-    print_table("지각 해시만 (기준선)", evaluate_phash(originals), time.time() - started)
+    print_table("지각 해시만 (기준선)", evaluate_phash(paths, queries),
+                time.time() - started)
 
     for spec in specs:
         started = time.time()
         try:
-            results = evaluate_model(spec, originals, chosen, batch)
+            results = evaluate_model(spec, paths, queries, chosen, batch)
         except Exception as exc:
             print(f"\n{spec.id}: 측정하지 못했습니다 ({exc})")
             continue

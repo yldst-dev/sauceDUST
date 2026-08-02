@@ -263,3 +263,61 @@ SELECT EXISTS (
 	t.Logf("계획:\n%s", plan)
 	_ = modelID
 }
+
+// 질의 캐시는 벡터와 해시를 함께 담아야 합니다.
+// 해시를 빼면 캐시가 맞았을 때 재정렬을 못 해서 같은 이미지의 답이 달라집니다.
+func TestQueryCacheKeepsHash(t *testing.T) {
+	store, modelID := reembedFixture(t, 1, func(int) bool { return true })
+	ctx := context.Background()
+
+	const sha = "abc123"
+	const phash = "f0f0f0f0f0f0f0f0"
+	want := []float32{0.5, -0.5, 0.25, 0}
+
+	if _, _, ok, err := store.CachedQuery(ctx, sha, modelID); err != nil || ok {
+		t.Fatalf("비어 있어야 합니다: ok=%v err=%v", ok, err)
+	}
+	if err := store.SaveQuery(ctx, sha, modelID, want, phash); err != nil {
+		t.Fatal(err)
+	}
+
+	got, gotHash, ok, err := store.CachedQuery(ctx, sha, modelID)
+	if err != nil || !ok {
+		t.Fatalf("찾지 못했습니다: ok=%v err=%v", ok, err)
+	}
+	if gotHash != phash {
+		t.Errorf("해시가 %q입니다. %q를 기대했습니다", gotHash, phash)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("벡터 길이가 %d입니다", len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("%d번째가 %v입니다. %v를 기대했습니다", i, got[i], want[i])
+		}
+	}
+}
+
+// 다시 저장하면 해시도 갱신되어야 합니다.
+func TestQueryCacheUpdatesHash(t *testing.T) {
+	store, modelID := reembedFixture(t, 1, func(int) bool { return true })
+	ctx := context.Background()
+
+	const sha = "same-image"
+	values := []float32{1, 0}
+
+	if err := store.SaveQuery(ctx, sha, modelID, values, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveQuery(ctx, sha, modelID, values, "aaaaaaaaaaaaaaaa"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, gotHash, ok, err := store.CachedQuery(ctx, sha, modelID)
+	if err != nil || !ok {
+		t.Fatal(err)
+	}
+	if gotHash != "aaaaaaaaaaaaaaaa" {
+		t.Errorf("해시가 %q입니다. 갱신되어야 합니다", gotHash)
+	}
+}

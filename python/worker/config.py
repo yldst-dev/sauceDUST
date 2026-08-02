@@ -9,12 +9,18 @@ from pathlib import Path
 
 from domain import ModelSpec, SpecError, parse_specs
 
+# models.json이 없을 때 쓰는 기본값입니다.
+#
+# 원본 찾기에 SigLIP을 씁니다. 이름은 글과 그림을 맞추는 모델처럼 들리지만,
+# 실측에서 원본 찾기 1등 비율이 가장 높았습니다. 후보 6,299장 기준 99.3퍼센트로
+# DINOv2보다 높고 처리도 더 빠릅니다. 특히 잘라낸 그림에서 98.5퍼센트로
+# DINOv2의 97.0퍼센트를 앞섭니다. 근거는 README에 있습니다.
 DEFAULT_MODELS = [
     {
-        "id": "dinov2-vitb14",
+        "id": "siglip-b16",
         "kind": "copy",
         "backend": "transformers",
-        "checkpoint": "facebook/dinov2-base",
+        "checkpoint": "google/siglip-base-patch16-224",
         "vector_size": 768,
         "input_size": 224,
     },

@@ -181,10 +181,18 @@ CREATE TABLE IF NOT EXISTS query_cache (
     sha256       TEXT        NOT NULL,
     model_id     TEXT        NOT NULL,
     vector       BYTEA       NOT NULL,
+    -- 질의 이미지의 지각 해시입니다. 벡터만 담아 두면 캐시가 맞았을 때
+    -- 해시 재정렬을 못 해서, 같은 이미지인데 두 번째 검색부터 답이
+    -- 달라집니다. 첫 검색은 "같은 그림 맞음"이라고 하고 두 번째는
+    -- 모르겠다고 합니다.
+    phash        TEXT        NOT NULL DEFAULT '',
     hits         BIGINT      NOT NULL DEFAULT 1,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_used_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (sha256, model_id)
 );
+
+-- 이미 만들어진 저장소에도 붙입니다.
+ALTER TABLE query_cache ADD COLUMN IF NOT EXISTS phash TEXT NOT NULL DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_query_cache_lru ON query_cache (last_used_at);

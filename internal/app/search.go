@@ -151,10 +151,16 @@ func (s *Search) ByImage(ctx context.Context, image []byte) (*SearchResult, erro
 // 캐시에는 벡터만 있고 해시는 없으므로, 캐시가 맞으면 해시 재정렬은 건너뜁니다.
 func (s *Search) queryVector(ctx context.Context, sha string, model domain.EmbeddingModel, image []byte) ([]float32, string, domain.Device, error) {
 	if s.cache != nil {
-		if cached, ok, err := s.cache.CachedQuery(ctx, sha, model.ID); err != nil {
+		cached, phash, ok, err := s.cache.CachedQuery(ctx, sha, model.ID)
+		switch {
+		case err != nil:
 			s.log.Warn("질의 캐시 조회 실패", slog.String("error", err.Error()))
-		} else if ok {
-			return cached, "", domain.DeviceUnknown, nil
+		case ok && phash == "":
+			// 해시를 담기 전에 저장된 옛 항목입니다. 그대로 쓰면 재정렬을
+			// 못 하므로 없는 것으로 치고 다시 계산합니다.
+			s.log.Debug("옛 캐시 항목이라 다시 계산합니다", slog.String("sha", sha))
+		case ok:
+			return cached, phash, domain.DeviceUnknown, nil
 		}
 	}
 
@@ -174,7 +180,7 @@ func (s *Search) queryVector(ctx context.Context, sha string, model domain.Embed
 	}
 
 	if s.cache != nil {
-		if err := s.cache.SaveQuery(ctx, sha, model.ID, vector); err != nil {
+		if err := s.cache.SaveQuery(ctx, sha, model.ID, vector, result.Hashes.PHash); err != nil {
 			s.log.Warn("질의 캐시 저장 실패", slog.String("error", err.Error()))
 		}
 	}

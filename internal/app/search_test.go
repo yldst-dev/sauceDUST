@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"saucedust/internal/domain"
@@ -71,6 +72,8 @@ func (s *stubImages) CountThumbsMissingVector(context.Context, string) (int64, e
 
 type hashEmbedder struct {
 	phash string
+	// calls는 워커를 몇 번 불렀는지 셉니다. 캐시가 도는지 확인하는 데 씁니다.
+	calls int
 }
 
 func (h *hashEmbedder) Describe(context.Context) (domain.EmbedderInfo, error) {
@@ -84,6 +87,7 @@ func (h *hashEmbedder) EmbedQuery(ctx context.Context, image []byte) (domain.Emb
 }
 
 func (h *hashEmbedder) Embed(context.Context, []byte) (domain.EmbedResult, error) {
+	h.calls++
 	return domain.EmbedResult{
 		Vectors: []domain.Vector{
 			{ModelID: "copy-model", Values: []float32{1, 0, 0, 0}},
@@ -260,5 +264,179 @@ func TestSameImageThreshold(t *testing.T) {
 	}
 	if got := domain.SameImageThreshold("ff"); got != 1 {
 		t.Fatalf("짧은 해시 기준값이 %d입니다. 최소 1이어야 합니다", got)
+	}
+}
+
+// 질의 캐시를 흉내 냅니다. 실제 저장소처럼 벡터와 해시를 함께 담습니다.
+type memoryCache struct {
+	mu      sync.Mutex
+	vectors map[string][]float32
+	hashes  map[string]string
+	// dropHash를 켜면 해시를 담지 않던 옛 저장소처럼 굽니다.
+	dropHash bool
+	hits     int
+	saves    int
+}
+
+func newMemoryCache() *memoryCache {
+	return &memoryCache{vectors: map[string][]float32{}, hashes: map[string]string{}}
+}
+
+func (c *memoryCache) CachedQuery(_ context.Context, sha, modelID string) ([]float32, string, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := sha + "|" + modelID
+	values, ok := c.vectors[key]
+	if !ok {
+		return nil, "", false, nil
+	}
+	c.hits++
+	return values, c.hashes[key], true, nil
+}
+
+func (c *memoryCache) SaveQuery(_ context.Context, sha, modelID string,
+	vector []float32, phash string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := sha + "|" + modelID
+	c.vectors[key] = vector
+	if !c.dropHash {
+		c.hashes[key] = phash
+	}
+	c.saves++
+	return nil
+}
+
+func searchWithCache(t *testing.T, cache QueryCacheRepository, queryHash string) *Search {
+	t.Helper()
+	index := &fakeIndex{matches: map[string][]domain.VectorMatch{
+		"copy": {
+			{ImageID: 1, Score: 0.99},
+			{ImageID: 2, Score: 0.95},
+			{ImageID: 3, Score: 0.90},
+		},
+	}}
+	images := &stubImages{byID: map[int64]domain.Image{
+		1: {ID: 1, SourcePostID: 100, PHash: "0000000000000000"},
+		2: {ID: 2, SourcePostID: 200, PHash: "00000000000000ff"},
+		3: {ID: 3, SourcePostID: 300, PHash: queryHash},
+	}}
+
+	search, err := NewSearch(SearchConfig{Limit: 3, Candidates: 10}, SearchDeps{
+		Embedder: &hashEmbedder{phash: queryHash},
+		Index:    index, Images: images, Cache: cache,
+		Models: testModels, Log: quietLogger(),
+	})
+	if err != nil {
+		t.Fatalf("검색기 생성 실패: %v", err)
+	}
+	return search
+}
+
+// 같은 이미지를 두 번 검색하면 같은 답이 나와야 합니다.
+//
+// 캐시가 벡터만 담고 해시를 빼면, 두 번째부터 재정렬을 못 해서 첫 번째는
+// "원본 맞음"이라 하고 두 번째는 모르겠다고 합니다. 실제로 겪은 일입니다.
+// 단위 시험이 캐시를 아예 꽂지 않아 끝까지 돌려 보고서야 드러났습니다.
+func TestSearchIsStableAcrossCacheHits(t *testing.T) {
+	const queryHash = "f0f0f0f0f0f0f0f0"
+
+	cache := newMemoryCache()
+	search := searchWithCache(t, cache, queryHash)
+	ctx := context.Background()
+
+	first, err := search.ByImage(ctx, []byte("query"))
+	if err != nil {
+		t.Fatalf("첫 검색 실패: %v", err)
+	}
+	second, err := search.ByImage(ctx, []byte("query"))
+	if err != nil {
+		t.Fatalf("두 번째 검색 실패: %v", err)
+	}
+
+	if cache.hits == 0 {
+		t.Fatal("캐시를 쓰지 않았습니다. 이 시험이 아무것도 확인하지 못합니다")
+	}
+	if first.ExactMatch != second.ExactMatch {
+		t.Errorf("원본 판정이 %v에서 %v로 바뀌었습니다",
+			first.ExactMatch, second.ExactMatch)
+	}
+	if !first.ExactMatch {
+		t.Fatal("해시가 같은데 원본으로 보지 않았습니다")
+	}
+	if len(first.Hits) != len(second.Hits) {
+		t.Fatalf("결과 수가 %d에서 %d로 바뀌었습니다", len(first.Hits), len(second.Hits))
+	}
+	for i := range first.Hits {
+		a, b := first.Hits[i], second.Hits[i]
+		if a.Image.SourcePostID != b.Image.SourcePostID {
+			t.Errorf("%d등이 게시물 %d에서 %d로 바뀌었습니다",
+				i+1, a.Image.SourcePostID, b.Image.SourcePostID)
+		}
+		if a.HashDistance != b.HashDistance {
+			t.Errorf("%d등의 해시 거리가 %d에서 %d로 바뀌었습니다",
+				i+1, a.HashDistance, b.HashDistance)
+		}
+		if a.Exact != b.Exact {
+			t.Errorf("%d등의 원본 여부가 %v에서 %v로 바뀌었습니다", i+1, a.Exact, b.Exact)
+		}
+	}
+}
+
+// 해시를 담기 전에 저장된 항목은 없는 것으로 치고 다시 계산해야 합니다.
+// 그대로 쓰면 이미 캐시된 이미지가 영영 원본 판정을 받지 못합니다.
+func TestSearchIgnoresCacheEntriesWithoutHash(t *testing.T) {
+	const queryHash = "f0f0f0f0f0f0f0f0"
+
+	cache := newMemoryCache()
+	cache.dropHash = true
+	search := searchWithCache(t, cache, queryHash)
+	ctx := context.Background()
+
+	if _, err := search.ByImage(ctx, []byte("query")); err != nil {
+		t.Fatal(err)
+	}
+	result, err := search.ByImage(ctx, []byte("query"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !result.ExactMatch {
+		t.Error("옛 캐시 항목 때문에 원본을 놓쳤습니다")
+	}
+	if result.Hits[0].HashDistance != 0 {
+		t.Errorf("해시 거리가 %d입니다. 다시 계산해야 합니다", result.Hits[0].HashDistance)
+	}
+}
+
+// 캐시가 있으면 워커를 다시 부르지 않아야 합니다. 그러라고 두는 것입니다.
+func TestSearchCacheAvoidsSecondEmbed(t *testing.T) {
+	const queryHash = "f0f0f0f0f0f0f0f0"
+
+	cache := newMemoryCache()
+	embedder := &hashEmbedder{phash: queryHash}
+	index := &fakeIndex{matches: map[string][]domain.VectorMatch{
+		"copy": {{ImageID: 3, Score: 0.9}},
+	}}
+	images := &stubImages{byID: map[int64]domain.Image{
+		3: {ID: 3, SourcePostID: 300, PHash: queryHash},
+	}}
+
+	search, err := NewSearch(SearchConfig{Limit: 3, Candidates: 10}, SearchDeps{
+		Embedder: embedder, Index: index, Images: images, Cache: cache,
+		Models: testModels, Log: quietLogger(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if _, err := search.ByImage(ctx, []byte("query")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if embedder.calls != 1 {
+		t.Errorf("워커를 %d번 불렀습니다. 캐시가 있으면 한 번이어야 합니다", embedder.calls)
 	}
 }

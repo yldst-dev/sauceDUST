@@ -72,9 +72,13 @@ type VectorRepository interface {
 	VectorsMissing(ctx context.Context, imageIDs []int64, modelID string) ([]int64, error)
 }
 
+// QueryCacheRepository는 같은 이미지를 다시 검색할 때 워커를 거치지 않게 합니다.
+//
+// 벡터와 지각 해시를 함께 담습니다. 해시를 빼면 캐시가 맞았을 때 재정렬을
+// 못 해서, 같은 이미지인데 두 번째 검색부터 답이 달라집니다.
 type QueryCacheRepository interface {
-	CachedQuery(ctx context.Context, sha, modelID string) ([]float32, bool, error)
-	SaveQuery(ctx context.Context, sha, modelID string, vector []float32) error
+	CachedQuery(ctx context.Context, sha, modelID string) (vector []float32, phash string, ok bool, err error)
+	SaveQuery(ctx context.Context, sha, modelID string, vector []float32, phash string) error
 }
 
 // VectorIndex는 검색용 벡터 저장소입니다. Qdrant가 기본 구현입니다.

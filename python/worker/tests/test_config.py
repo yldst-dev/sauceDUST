@@ -98,3 +98,34 @@ def test_load_reads_numeric_env():
 def test_load_rejects_bad_env(env, reason):
     with pytest.raises(SpecError):
         config.load({"SAUCEDUST_MODELS": json.dumps([VALID]), **env})
+
+
+# 모델 선택은 되돌리기 비싼 결정입니다. 바꾸면 쌓인 벡터를 전부 다시
+# 계산해야 하므로, 실측으로 정한 값이 실수로 바뀌지 않게 못 박아 둡니다.
+# 근거는 README의 모델 비교 실측에 있습니다.
+def test_default_copy_model_is_the_measured_winner():
+    settings = config.load({})
+    copies = [s for s in settings.specs if s.kind == "copy"]
+
+    assert len(copies) == 1, "copy 모델은 하나여야 합니다"
+    assert copies[0].id == "siglip-b16"
+    assert copies[0].checkpoint == "google/siglip-base-patch16-224"
+    assert copies[0].vector_size == 768
+
+
+def test_shipped_models_json_matches_the_decision():
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent.parent / "models.json"
+    specs = config.load({"SAUCEDUST_MODELS_PATH": str(path)}).specs
+
+    by_kind = {s.kind: s for s in specs}
+    assert by_kind["copy"].id == "siglip-b16"
+    assert by_kind["copy"].vector_size == 768
+    assert by_kind["semantic"].id == "clip-b32"
+    assert by_kind["semantic"].vector_size == 512
+
+    # 차원이 어긋나면 Qdrant 컬렉션과 맞지 않아 저장이 통째로 막힙니다.
+    for spec in specs:
+        assert spec.vector_size > 0
+        assert spec.backend == "transformers"

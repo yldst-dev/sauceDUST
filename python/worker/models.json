@@ -1,18 +1,18 @@
 [
   {
-    "id": "dinov2-vitb14",
+    "id": "siglip-b16",
     "kind": "copy",
     "backend": "transformers",
-    "checkpoint": "facebook/dinov2-base",
+    "checkpoint": "google/siglip-base-patch16-224",
     "vector_size": 768,
     "input_size": 224
   },
   {
-    "id": "siglip-b16",
+    "id": "clip-b32",
     "kind": "semantic",
     "backend": "transformers",
-    "checkpoint": "google/siglip-base-patch16-224",
-    "vector_size": 768,
+    "checkpoint": "laion/CLIP-ViT-B-32-laion2B-s34B-b79K",
+    "vector_size": 512,
     "input_size": 224
   }
 ]

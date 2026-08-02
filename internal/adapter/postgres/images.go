@@ -401,31 +401,42 @@ WHERE thumb_path IS NOT NULL AND thumb_path <> ''
 	return n, nil
 }
 
-func (s *Store) CachedQuery(ctx context.Context, sha, modelID string) ([]float32, bool, error) {
-	var raw []byte
+// CachedQuery는 벡터와 함께 지각 해시도 돌려줍니다.
+//
+// 해시를 빼면 캐시가 맞았을 때 재정렬을 못 합니다. 같은 이미지를 두 번
+// 검색했을 때 첫 번째는 "같은 그림 맞음"이라 하고 두 번째는 모르겠다고
+// 하는, 재현하기 어려운 형태로 드러납니다.
+func (s *Store) CachedQuery(ctx context.Context, sha, modelID string) ([]float32, string, bool, error) {
+	var (
+		raw   []byte
+		phash string
+	)
 	err := s.pool.QueryRow(ctx, `
 UPDATE query_cache SET hits = hits + 1, last_used_at = now()
 WHERE sha256 = $1 AND model_id = $2
-RETURNING vector`, sha, modelID).Scan(&raw)
+RETURNING vector, phash`, sha, modelID).Scan(&raw, &phash)
 	if err != nil {
 		if isNoRows(err) {
-			return nil, false, nil
+			return nil, "", false, nil
 		}
-		return nil, false, err
+		return nil, "", false, err
 	}
 	values, err := domain.DecodeVector(raw)
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
-	return values, true, nil
+	return values, phash, true, nil
 }
 
-func (s *Store) SaveQuery(ctx context.Context, sha, modelID string, vector []float32) error {
+func (s *Store) SaveQuery(ctx context.Context, sha, modelID string,
+	vector []float32, phash string) error {
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO query_cache (sha256, model_id, vector)
-VALUES ($1, $2, $3)
-ON CONFLICT (sha256, model_id) DO UPDATE SET last_used_at = now()`,
-		sha, modelID, domain.EncodeVector(vector))
+INSERT INTO query_cache (sha256, model_id, vector, phash)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (sha256, model_id) DO UPDATE SET
+    last_used_at = now(),
+    phash        = EXCLUDED.phash`,
+		sha, modelID, domain.EncodeVector(vector), phash)
 	return err
 }
 

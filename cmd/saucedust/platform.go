@@ -1,8 +1,10 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // 운영체제마다 다른 것들을 한곳에 모읍니다.
@@ -43,27 +45,99 @@ func pythonCandidates(goos string) []string {
 	return []string{"python3.12", "python3.11", "python3.13", "python3"}
 }
 
+// linuxFamily는 배포판 갈래를 냅니다.
+//
+// 리눅스를 전부 Debian으로 보고 apt를 알려 주면, Rocky나 openSUSE에서는
+// 그대로 따라 해도 아무 일이 안 일어납니다. 없는 명령을 알려 주는 것은
+// 안 알려 주는 것보다 나쁩니다. 어디로 가야 할지 모르게 만듭니다.
+//
+// ID를 먼저 보고 없으면 ID_LIKE를 봅니다. Rocky는 ID가 rocky이고
+// ID_LIKE가 "rhel centos fedora"입니다.
+func linuxFamily(osRelease string) string {
+	fields := map[string]string{}
+	for _, line := range strings.Split(osRelease, "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		fields[key] = strings.Trim(value, `"'`)
+	}
+
+	known := map[string]string{
+		"rocky": "rhel", "almalinux": "rhel", "centos": "rhel",
+		"rhel": "rhel", "fedora": "rhel",
+		"debian": "debian", "ubuntu": "debian",
+		"opensuse": "suse", "sles": "suse",
+		"arch": "arch",
+	}
+	if family, ok := known[fields["ID"]]; ok {
+		return family
+	}
+	for _, like := range strings.Fields(fields["ID_LIKE"]) {
+		if family, ok := known[like]; ok {
+			return family
+		}
+	}
+	return ""
+}
+
+// currentLinuxFamily는 이 컴퓨터의 갈래를 봅니다. 리눅스가 아니면 빕니다.
+func currentLinuxFamily() string {
+	if runtime.GOOS != "linux" {
+		return ""
+	}
+	raw, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return ""
+	}
+	return linuxFamily(string(raw))
+}
+
+// installHint는 갈래에 맞는 설치 명령을 냅니다.
+// 모르는 갈래면 명령 대신 무엇이 필요한지만 알려 줍니다.
+func installHint(family string, pkgs map[string]string) string {
+	if cmd, ok := pkgs[family]; ok {
+		return cmd
+	}
+	return pkgs[""]
+}
+
 // postgresHint는 psql이 없을 때 무엇을 하라고 알려 줄지입니다.
-func postgresHint(goos string) string {
+func postgresHint(goos, family string) string {
+	const need = "PostgreSQL 클라이언트가 필요합니다. "
 	switch goos {
 	case "windows":
-		return "PostgreSQL 클라이언트가 필요합니다. winget install PostgreSQL.PostgreSQL"
+		return need + "winget install PostgreSQL.PostgreSQL"
 	case "darwin":
-		return "PostgreSQL 클라이언트가 필요합니다. brew install postgresql@16"
+		return need + "brew install postgresql@16"
 	default:
-		return "PostgreSQL 클라이언트가 필요합니다. apt install postgresql-client"
+		return need + installHint(family, map[string]string{
+			"rhel":   "dnf install postgresql",
+			"debian": "apt install postgresql-client",
+			"suse":   "zypper install postgresql",
+			"arch":   "pacman -S postgresql-libs",
+			"":       "쓰는 배포판의 postgresql 클라이언트 꾸러미를 깔아 주십시오",
+		})
 	}
 }
 
 // pythonHint는 Python이 없을 때 알려 줄 말입니다.
-func pythonHint(goos string) string {
+func pythonHint(goos, family string) string {
+	const need = "Python 3.11 이상을 찾지 못했습니다. "
 	switch goos {
 	case "windows":
-		return "Python 3.11 이상을 찾지 못했습니다. winget install Python.Python.3.12"
+		return need + "winget install Python.Python.3.12"
 	case "darwin":
-		return "Python 3.11 이상을 찾지 못했습니다. brew install python@3.12"
+		return need + "brew install python@3.12"
 	default:
-		return "Python 3.11 이상을 찾지 못했습니다. apt install python3.12-venv"
+		return need + installHint(family, map[string]string{
+			// RHEL 갈래는 venv가 본체에 들어 있어 따로 깔 것이 없습니다.
+			"rhel":   "dnf install python3.12 python3.12-pip",
+			"debian": "apt install python3.12-venv",
+			"suse":   "zypper install python312 python312-pip",
+			"arch":   "pacman -S python",
+			"":       "쓰는 배포판의 python 3.12와 venv 꾸러미를 깔아 주십시오",
+		})
 	}
 }
 

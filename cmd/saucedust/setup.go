@@ -86,7 +86,7 @@ var requiredTools = []struct {
 	name string
 	hint string
 }{
-	{"psql", postgresHint(runtime.GOOS)},
+	{"psql", postgresHint(runtime.GOOS, currentLinuxFamily())},
 }
 
 func checkTools() error {
@@ -128,7 +128,7 @@ func findPython(override string) (string, error) {
 			return path, nil
 		}
 	}
-	return "", errors.New(pythonHint(runtime.GOOS))
+	return "", errors.New(pythonHint(runtime.GOOS, currentLinuxFamily()))
 }
 
 func ensureVenv(ctx context.Context, python, venv string) error {

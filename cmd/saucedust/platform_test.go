@@ -70,19 +70,57 @@ func TestPythonCandidates(t *testing.T) {
 // 리눅스 사용자에게 brew를 알려 주면 아무 도움이 안 됩니다.
 func TestHintsMatchThePlatform(t *testing.T) {
 	tests := []struct {
-		goos, want string
+		goos, family, want string
 	}{
-		{"windows", "winget"},
-		{"darwin", "brew"},
-		{"linux", "apt"},
+		{"windows", "", "winget"},
+		{"darwin", "", "brew"},
+		{"linux", "debian", "apt"},
+		{"linux", "rhel", "dnf"},
+		{"linux", "suse", "zypper"},
+		{"linux", "arch", "pacman"},
 	}
 
 	for _, tc := range tests {
-		if got := postgresHint(tc.goos); !strings.Contains(got, tc.want) {
-			t.Errorf("%s의 psql 안내에 %q가 없습니다: %s", tc.goos, tc.want, got)
+		if got := postgresHint(tc.goos, tc.family); !strings.Contains(got, tc.want) {
+			t.Errorf("%s/%s의 psql 안내에 %q가 없습니다: %s", tc.goos, tc.family, tc.want, got)
 		}
-		if got := pythonHint(tc.goos); !strings.Contains(got, tc.want) {
-			t.Errorf("%s의 Python 안내에 %q가 없습니다: %s", tc.goos, tc.want, got)
+		if got := pythonHint(tc.goos, tc.family); !strings.Contains(got, tc.want) {
+			t.Errorf("%s/%s의 Python 안내에 %q가 없습니다: %s", tc.goos, tc.family, tc.want, got)
+		}
+	}
+}
+
+// 모르는 배포판에는 없는 명령을 알려 주면 안 됩니다.
+// 따라 해도 아무 일이 안 일어나서 어디로 가야 할지 모르게 만듭니다.
+func TestUnknownDistroGetsNoCommand(t *testing.T) {
+	for _, hint := range []string{postgresHint("linux", ""), pythonHint("linux", "")} {
+		for _, cmd := range []string{"apt", "dnf", "zypper", "pacman"} {
+			if strings.Contains(hint, cmd) {
+				t.Errorf("모르는 배포판에 %q를 알려 줍니다: %s", cmd, hint)
+			}
+		}
+	}
+}
+
+// Rocky는 ID가 rocky이고 ID_LIKE에 rhel이 들어 있습니다.
+func TestLinuxFamilyFromOSRelease(t *testing.T) {
+	tests := []struct {
+		name, raw, want string
+	}{
+		{"rocky", "NAME=\"Rocky Linux\"\nID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\n", "rhel"},
+		{"almalinux", "ID=\"almalinux\"\nID_LIKE=\"rhel centos fedora\"\n", "rhel"},
+		{"ubuntu", "ID=ubuntu\nID_LIKE=debian\n", "debian"},
+		{"debian", "ID=debian\n", "debian"},
+		{"opensuse", "ID=\"opensuse-leap\"\nID_LIKE=\"suse opensuse\"\n", "suse"},
+		{"arch", "ID=arch\n", "arch"},
+		{"모르는 것", "ID=plan9\n", ""},
+		{"빈 파일", "", ""},
+		{"주석과 빈 줄", "# 설명\n\nID=rocky\n", "rhel"},
+	}
+
+	for _, tc := range tests {
+		if got := linuxFamily(tc.raw); got != tc.want {
+			t.Errorf("%s에서 %q가 나왔습니다. %q여야 합니다", tc.name, got, tc.want)
 		}
 	}
 }

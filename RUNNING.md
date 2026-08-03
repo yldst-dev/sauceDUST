@@ -33,9 +33,16 @@ worker C ─┘      ↑
 |---|---|---|
 | **Windows** | `winget install Python.Python.3.12` | `winget install PostgreSQL.PostgreSQL` |
 | **macOS** | `brew install python@3.12` | `brew install postgresql@16` |
-| **Linux** | `apt install python3.12-venv` | `apt install postgresql-client` |
+| **Rocky, RHEL** | `dnf install python3.12 python3.12-pip` | `dnf install postgresql` |
+| **Debian, Ubuntu** | `apt install python3.12-venv` | `apt install postgresql-client` |
+| **openSUSE** | `zypper install python312 python312-pip` | `zypper install postgresql` |
 
-없으면 `setup`이 그 운영체제에 맞는 명령을 알려 주고 멈춥니다.
+없으면 `setup`이 그 배포판에 맞는 명령을 알려 주고 멈춥니다.
+
+**Rocky에서는 `python3`를 쓰면 안 됩니다.** Rocky 9의 `python3`는 3.9인데
+torch는 3.10부터라 그것으로는 설치가 안 됩니다. `setup`이 판을 확인해서
+막고 무엇을 깔아야 하는지 알려 줍니다. Rocky 9.8에서 위 명령으로 `setup`이
+끝까지 도는 것을 확인했습니다.
 
 ### Windows
 

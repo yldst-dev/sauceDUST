@@ -152,3 +152,42 @@ func contains(list []string, want string) bool {
 	}
 	return false
 }
+
+// Rocky 9의 python3는 3.9입니다. 이름만 보고 고르면 torch가 안 깔리는
+// 가상 환경을 만들고, 몇 분 뒤 pip가 엉뚱한 말로 실패합니다.
+func TestParsePythonVersion(t *testing.T) {
+	tests := []struct {
+		raw            string
+		major, minor   int
+		ok             bool
+		enoughForTorch bool
+	}{
+		{"Python 3.12.13", 3, 12, true, true},
+		{"Python 3.11.13", 3, 11, true, true},
+		{"Python 3.9.25", 3, 9, true, false},
+		{"Python 3.10.0", 3, 10, true, false},
+		{"Python 4.0.1", 4, 0, true, true},
+		{"Python 3.13", 3, 13, true, true},
+		{"", 0, 0, false, true},
+		{"Python", 0, 0, false, true},
+		{"Python 3", 0, 0, false, true},
+		{"Python 세.열둘", 0, 0, false, true},
+	}
+
+	for _, tc := range tests {
+		major, minor, ok := parsePythonVersion(tc.raw)
+		if ok != tc.ok || (ok && (major != tc.major || minor != tc.minor)) {
+			t.Errorf("%q에서 %d.%d(ok=%v)가 나왔습니다. %d.%d(ok=%v)여야 합니다",
+				tc.raw, major, minor, ok, tc.major, tc.minor, tc.ok)
+		}
+
+		// 못 알아들으면 막지 않는 것까지 함께 봅니다. 판 표기가 바뀌었다고
+		// 설치를 세우면 안 됩니다.
+		got := !ok || major > minPythonMajor ||
+			(major == minPythonMajor && minor >= minPythonMinor)
+		if got != tc.enoughForTorch {
+			t.Errorf("%q를 쓸 수 있다고 %v로 봤습니다. %v여야 합니다",
+				tc.raw, got, tc.enoughForTorch)
+		}
+	}
+}

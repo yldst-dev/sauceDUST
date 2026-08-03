@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -114,27 +115,106 @@ func checkTools() error {
 
 // findPython은 torch가 지원하는 버전을 찾습니다.
 // 아주 최신 버전은 torch 휠이 아직 없을 수 있어 검증된 순서로 봅니다.
+//
+// 이름만 보고 고르면 안 됩니다. Rocky 9의 python3는 3.9인데 torch는
+// 3.10부터라, 그것으로 가상 환경을 만들면 몇 분 뒤 pip가 엉뚱한 말로
+// 실패합니다. 실제로 Rocky에서 그렇게 막혔습니다. 판을 물어보고 고릅니다.
 func findPython(override string) (string, error) {
 	if override != "" {
 		path, err := exec.LookPath(override)
 		if err != nil {
 			return "", fmt.Errorf("지정한 Python을 찾지 못했습니다: %w", err)
 		}
+		if !pythonNewEnough(path) {
+			return "", fmt.Errorf("지정한 %s가 %s입니다. %s 이상이 필요합니다",
+				override, pythonVersionOf(path), minPythonText)
+		}
 		return path, nil
 	}
 
+	var tooOld []string
 	for _, name := range pythonCandidates(runtime.GOOS) {
-		if path, err := exec.LookPath(name); err == nil {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		if pythonNewEnough(path) {
 			return path, nil
 		}
+		tooOld = append(tooOld, name+"("+pythonVersionOf(path)+")")
 	}
-	return "", errors.New(pythonHint(runtime.GOOS, currentLinuxFamily()))
+
+	hint := pythonHint(runtime.GOOS, currentLinuxFamily())
+	if len(tooOld) > 0 {
+		// 무엇을 찾았고 왜 안 쓰는지 알려 줍니다. "없습니다"만 내면
+		// python3가 멀쩡히 있는 사람은 무슨 소린지 모릅니다.
+		return "", fmt.Errorf("%s (찾은 것: %s)", hint, strings.Join(tooOld, ", "))
+	}
+	return "", errors.New(hint)
 }
 
+const (
+	minPythonMajor = 3
+	minPythonMinor = 11
+	minPythonText  = "3.11"
+)
+
+// pythonNewEnough는 그 Python이 torch를 감당하는 판인지 봅니다.
+func pythonNewEnough(path string) bool {
+	major, minor, ok := parsePythonVersion(pythonVersionOf(path))
+	if !ok {
+		// 못 알아들으면 막지 않습니다. 판 표기가 바뀌었다고 설치를
+		// 세우는 것은 지나칩니다. 뒤에서 pip가 걸러 냅니다.
+		return true
+	}
+	return major > minPythonMajor || (major == minPythonMajor && minor >= minPythonMinor)
+}
+
+func pythonVersionOf(path string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return firstLine(ctx, path, "-V")
+}
+
+// parsePythonVersion은 "Python 3.12.13"에서 3과 12를 꺼냅니다.
+func parsePythonVersion(raw string) (major, minor int, ok bool) {
+	fields := strings.Fields(raw)
+	if len(fields) < 2 {
+		return 0, 0, false
+	}
+	parts := strings.Split(fields[1], ".")
+	if len(parts) < 2 {
+		return 0, 0, false
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, false
+	}
+	minor, err = strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, false
+	}
+	return major, minor, true
+}
+
+// ensureVenv는 가상 환경을 마련합니다.
+//
+// 이미 있으면 그 안의 판을 확인합니다. 확인 없이 다시 쓰면, 예전에
+// 낡은 Python으로 만들어 둔 것을 계속 붙들고 있습니다. 알맞은 판을
+// 새로 깔고 setup을 다시 불러도 안 고쳐지는 형태라, 어디를 손대야
+// 하는지 알 수가 없습니다.
 func ensureVenv(ctx context.Context, python, venv string) error {
-	if _, err := os.Stat(venvPython(venv)); err == nil {
-		fmt.Println("가상 환경이 이미 있습니다.")
-		return nil
+	existing := venvPython(venv)
+	if _, err := os.Stat(existing); err == nil {
+		if pythonNewEnough(existing) {
+			fmt.Println("가상 환경이 이미 있습니다.")
+			return nil
+		}
+		fmt.Printf("가상 환경이 %s로 만들어져 있어 다시 만듭니다. %s 이상이 필요합니다.\n",
+			pythonVersionOf(existing), minPythonText)
+		if err := os.RemoveAll(venv); err != nil {
+			return fmt.Errorf("낡은 가상 환경을 지우지 못했습니다: %w", err)
+		}
 	}
 	fmt.Println("가상 환경을 만듭니다...")
 	return runStep(ctx, "", python, "-m", "venv", venv)

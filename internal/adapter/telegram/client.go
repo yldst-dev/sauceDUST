@@ -168,23 +168,30 @@ func (c *Client) DownloadFile(ctx context.Context, fileID string) ([]byte, error
 	if err := c.call(ctx, "getFile", map[string]any{"file_id": fileID}, &meta); err != nil {
 		return nil, err
 	}
-	if meta.Result.FilePath == "" {
-		return nil, errors.New("파일 경로를 받지 못했습니다")
-	}
 	if meta.Result.FileSize > maxFileBytes {
 		return nil, fmt.Errorf("파일이 너무 큽니다: %d바이트", meta.Result.FileSize)
+	}
+
+	// 경로를 먼저 봅니다. 이 값은 텔레그램 응답에서 오는 바깥 입력입니다.
+	//
+	// 그대로 주소에 이어 붙이면, 못 쓰는 글자가 하나 섞인 것만으로
+	// http.NewRequest가 주소 전체를 담은 오류를 냅니다. 그 주소에는 봇
+	// 토큰이 들어 있어서, 상대가 보내는 값으로 토큰을 뽑아낼 수 있습니다.
+	if err := checkFilePath(meta.Result.FilePath); err != nil {
+		return nil, err
 	}
 
 	url := fmt.Sprintf("%s/file/bot%s/%s", c.base, c.token, meta.Result.FilePath)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		// 주소를 못 만든 오류에도 그 주소가 들어 있습니다.
+		return nil, c.maskErr("파일 주소를 만들지 못했습니다", err)
 	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
 		// 이 주소에도 토큰이 들어 있습니다. call과 같은 이유로 가립니다.
-		return nil, fmt.Errorf("파일을 받지 못했습니다: %s", c.maskToken(err.Error()))
+		return nil, c.maskErr("파일을 받지 못했습니다", err)
 	}
 	defer resp.Body.Close()
 
@@ -194,7 +201,8 @@ func (c *Client) DownloadFile(ctx context.Context, fileID string) ([]byte, error
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFileBytes+1))
 	if err != nil {
-		return nil, err
+		// 본문을 읽다 끊기면 전송 계층이 *url.Error를 냅니다. 주소가 있습니다.
+		return nil, c.maskErr("파일 본문을 읽지 못했습니다", err)
 	}
 	if int64(len(data)) > maxFileBytes {
 		return nil, errors.New("파일이 크기 제한을 넘었습니다")
@@ -231,6 +239,42 @@ func (c *Client) maskToken(text string) string {
 	return strings.ReplaceAll(text, c.token, "<토큰 가림>")
 }
 
+// maskErr는 오류를 내보내기 전에 토큰을 지웁니다.
+//
+// %w로 감싸면 감싼 오류가 원문을 그대로 들고 있어서, 부르는 쪽이
+// Unwrap을 하거나 %+v로 찍는 순간 다시 새어 나옵니다. 문자열로 눌러
+// 담습니다. 이 꾸러미에서 풀어 봐야 하는 것은 APIError뿐이고 그것은
+// 주소를 담지 않으므로 이 길을 지나지 않습니다.
+func (c *Client) maskErr(what string, err error) error {
+	return fmt.Errorf("%s: %s", what, c.maskToken(err.Error()))
+}
+
+// checkFilePath는 텔레그램이 알려 준 파일 경로가 주소에 넣어도 되는지 봅니다.
+//
+// 통과시키는 것은 글자, 숫자, 밑줄, 붙임표, 점, 그리고 빗금뿐입니다.
+// 실제 값은 photos/file_123.jpg 같은 모양이라 이걸로 충분합니다.
+func checkFilePath(path string) error {
+	if path == "" {
+		return errors.New("파일 경로를 받지 못했습니다")
+	}
+	if len(path) > 512 {
+		return errors.New("파일 경로가 너무 깁니다")
+	}
+	// 상위로 올라가는 것과 절대 경로를 막습니다. 주소 경로가 바뀝니다.
+	if strings.HasPrefix(path, "/") || strings.Contains(path, "..") {
+		return errors.New("파일 경로 모양이 잘못되었습니다")
+	}
+	for _, r := range path {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '_' || r == '-' || r == '.' || r == '/':
+		default:
+			return errors.New("파일 경로에 쓸 수 없는 글자가 있습니다")
+		}
+	}
+	return nil
+}
+
 func (c *Client) call(ctx context.Context, method string, body any, out any) error {
 	encoded, err := json.Marshal(body)
 	if err != nil {
@@ -245,7 +289,8 @@ func (c *Client) call(ctx context.Context, method string, body any, out any) err
 	url := fmt.Sprintf("%s/bot%s/%s", c.base, c.token, method)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(encoded))
 	if err != nil {
-		return err
+		// 주소를 못 만든 오류에도 그 주소가 들어 있습니다.
+		return c.maskErr("텔레그램 "+method+" 주소를 만들지 못했습니다", err)
 	}
 	req.Header.Set("content-type", "application/json")
 
@@ -254,13 +299,14 @@ func (c *Client) call(ctx context.Context, method string, body any, out any) err
 		// *url.Error는 요청 주소를 그대로 담고, 그 주소에는 봇 토큰이
 		// 들어 있습니다. 가리지 않으면 폴링이 실패할 때마다 토큰 전체가
 		// 로그와 net_probes.detail에 평문으로 남습니다.
-		return fmt.Errorf("텔레그램 %s 호출에 실패했습니다: %s", method, c.maskToken(err.Error()))
+		return c.maskErr("텔레그램 "+method+" 호출에 실패했습니다", err)
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return err
+		// 본문을 읽다 끊기면 전송 계층이 *url.Error를 냅니다. 주소가 있습니다.
+		return c.maskErr("텔레그램 "+method+" 응답을 읽지 못했습니다", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {

@@ -64,8 +64,9 @@ type Crawler struct {
 	// saved는 이번 실행에서 저장한 수입니다. MaxImages와 견줍니다.
 	// throughput과 나눠 두는 이유는 그쪽이 구간 크기를 정하는 데 쓰여
 	// 뜻이 다르기 때문입니다.
-	saved atomic.Int64
-	stop  context.CancelFunc
+	saved     atomic.Int64
+	stop      context.CancelFunc
+	limitDone atomic.Bool
 
 	counter    IndexCounter
 	warnedFull atomic.Bool
@@ -196,7 +197,13 @@ func (c *Crawler) catchupOnce(ctx context.Context) error {
 		return nil
 	}
 
-	report, _, err := c.index(ctx, posts)
+	report, trimmed, err := c.index(ctx, posts)
+
+	// 저장한 수는 어느 경로에서 왔든 세야 합니다. 여기서 세지 않으면
+	// remaining()이 줄지 않아 -limit이 따라잡기만으로는 멈추지 않고,
+	// 자를 때 쓰는 남은 몫도 언제나 상한 그대로가 됩니다.
+	c.countSaved(report.Saved)
+
 	if err != nil {
 		return err
 	}
@@ -204,6 +211,16 @@ func (c *Crawler) catchupOnce(ctx context.Context) error {
 	// 실패한 게시물은 재시도 큐로 넘기고, 워터마크는 그대로 올립니다.
 	// 그래야 실패 한 건이 최신 수집 전체를 막지 않습니다.
 	c.enqueueFailures(ctx, report.Failed)
+
+	// 잘라 냈으면 워터마크를 올리면 안 됩니다.
+	//
+	// 최신 200개를 받아 와 앞의 다섯 개만 처리했는데 200개 전부의
+	// 최댓값으로 올리면 나머지 195개는 다시 안 봅니다. 워터마크는
+	// 되돌아가지 않으므로 영구 구멍입니다. -limit은 문서가 첫 실행으로
+	// 안내하는 명령이라 처음 써 보는 사람이 바로 밟습니다.
+	if trimmed {
+		return nil
+	}
 
 	var highest int64
 	for _, post := range posts {
@@ -394,15 +411,22 @@ func (c *Crawler) reschedule(ctx context.Context, item domain.PostRetry, cause e
 // 구간이 완료로 닫힙니다. 20개 구간에서 5개만 보고 닫으면 나머지
 // 15개는 영영 안 모입니다. 두 번 그렇게 틀렸으므로 직접 돌려줍니다.
 func (c *Crawler) index(ctx context.Context, posts []domain.SourcePost) (BatchReport, bool, error) {
-	trimmed := false
-	if left := c.remaining(); left >= 0 && int64(len(posts)) > left {
-		posts = posts[:left]
-		trimmed = true
-	}
+	// 자리를 먼저 잡고 그만큼만 넘깁니다.
+	//
+	// 남은 몫을 읽고 나서 저장하면 작업자 둘이 같은 값을 보고 각자
+	// 그만큼 저장해 상한의 배수만큼 넘칩니다. -limit 20에 60장이
+	// 들어갔습니다. 원자적으로 떼어 오면 넘치지 않습니다.
+	take := c.reserve(len(posts))
+	trimmed := take < len(posts)
+	posts = posts[:take]
 	if len(posts) == 0 {
 		return BatchReport{}, trimmed, nil
 	}
 	report, err := c.indexer.IndexBatch(ctx, posts)
+
+	// 멈춤 신호는 처리가 끝난 뒤에 보냅니다. 자리를 잡자마자 보내면
+	// 그 자리에서 취소가 걸려 방금 잡은 몫을 처리하지 못합니다.
+	c.noteLimitReached(c.saved.Load())
 	return report, trimmed, err
 }
 
@@ -450,14 +474,59 @@ func (c *Crawler) recordThroughput(saved int, took time.Duration) {
 	}
 	c.elapsed.Add(uint64(millis))
 
-	// 상한을 채웠으면 멈춥니다. 이미 돌고 있는 묶음은 끝까지 가므로
-	// 실제 저장 수는 상한을 조금 넘을 수 있습니다.
-	total := c.saved.Add(int64(saved))
-	if c.cfg.MaxImages > 0 && total >= c.cfg.MaxImages && c.stop != nil {
+	c.countSaved(saved)
+}
+
+// reserve는 상한에서 처리할 몫을 원자적으로 떼어 옵니다.
+//
+// 상한이 없으면 달라는 대로 줍니다. 상한이 있으면 남은 만큼만 주고,
+// 준 만큼을 바로 차감해 다른 작업자가 같은 자리를 또 가져가지 못하게
+// 합니다. 그래서 세는 값은 "저장한 수"가 아니라 "처리하기로 한 수"이며,
+// -limit은 "이만큼 처리하고 멈춘다"는 뜻입니다.
+func (c *Crawler) reserve(want int) int {
+	if c.cfg.MaxImages <= 0 || want <= 0 {
+		return want
+	}
+	for {
+		cur := c.saved.Load()
+		left := c.cfg.MaxImages - cur
+		if left <= 0 {
+			return 0
+		}
+		take := int64(want)
+		if take > left {
+			take = left
+		}
+		if c.saved.CompareAndSwap(cur, cur+take) {
+			return int(take)
+		}
+	}
+}
+
+// noteLimitReached는 상한을 채웠으면 한 번만 알리고 멈춥니다.
+func (c *Crawler) noteLimitReached(total int64) {
+	if c.cfg.MaxImages <= 0 || total < c.cfg.MaxImages || c.stop == nil {
+		return
+	}
+	if c.limitDone.CompareAndSwap(false, true) {
 		c.log.Info("정한 만큼 모았습니다. 멈춥니다",
-			slog.Int64("모은 수", total), slog.Int64("상한", c.cfg.MaxImages))
+			slog.Int64("처리한 수", total), slog.Int64("상한", c.cfg.MaxImages))
 		c.stop()
 	}
+}
+
+// countSaved는 저장한 수를 세고, 상한을 채웠으면 멈춥니다.
+//
+// 속도 기록과 나눠 둡니다. 속도는 구간 크기를 정하는 데 쓰는데 따라잡기는
+// 구간과 모양이 달라 섞으면 구간 크기가 엉뚱해집니다. 세는 것은 어느
+// 경로에서 왔든 해야 합니다.
+func (c *Crawler) countSaved(saved int) {
+	// 상한이 있으면 reserve가 미리 떼어 가며 이미 셌습니다. 여기서 또
+	// 세면 두 번 세어 상한의 절반에서 멈춥니다.
+	if saved <= 0 || c.cfg.MaxImages > 0 {
+		return
+	}
+	c.saved.Add(int64(saved))
 }
 
 func (c *Crawler) rangeSize() int64 {

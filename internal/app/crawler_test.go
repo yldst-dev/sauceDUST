@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -399,7 +400,7 @@ func TestRetryDelayGrows(t *testing.T) {
 	}
 }
 
-// 정한 만큼 모으면 스스로 멈춰야 합니다.
+// 정한 만큼 처리하면 스스로 멈춰야 합니다.
 // 새 노드가 도는지 확인하려고 끝없이 도는 것을 띄웠다가 손으로 죽이면,
 // 어디까지 갔는지도 얼마나 걸렸는지도 남지 않습니다.
 func TestCrawlerStopsAtLimit(t *testing.T) {
@@ -407,24 +408,76 @@ func TestCrawlerStopsAtLimit(t *testing.T) {
 	cfg.MaxImages = 20
 	crawler, _ := newCrawler(t, cfg, &rangeSource{latest: 60}, &fakeLease{frontier: 61})
 
-	// Run이 감싸는 취소 함수를 흉내 냅니다.
 	var stopped bool
 	crawler.stop = func() { stopped = true }
 
-	crawler.recordThroughput(8, time.Second)
+	if got := crawler.reserve(8); got != 8 {
+		t.Errorf("여덟 자리를 달랬는데 %d를 줬습니다", got)
+	}
+	crawler.noteLimitReached(crawler.Saved())
 	if stopped {
 		t.Fatal("8건에서 멈췄습니다")
 	}
-	if got := crawler.Saved(); got != 8 {
-		t.Errorf("%d건이라고 합니다", got)
-	}
 
-	crawler.recordThroughput(12, time.Second)
+	// 남은 것보다 많이 달라고 하면 남은 만큼만 줘야 합니다.
+	if got := crawler.reserve(50); got != 12 {
+		t.Errorf("남은 12자리를 달랬는데 %d를 줬습니다", got)
+	}
+	crawler.noteLimitReached(crawler.Saved())
 	if !stopped {
 		t.Error("20건을 채웠는데 멈추지 않았습니다")
 	}
 	if got := crawler.Saved(); got != 20 {
 		t.Errorf("%d건이라고 합니다. 20이어야 합니다", got)
+	}
+
+	// 다 찼으면 더 주면 안 됩니다.
+	if got := crawler.reserve(10); got != 0 {
+		t.Errorf("다 찼는데 %d자리를 줬습니다", got)
+	}
+}
+
+// 작업자 여럿이 동시에 달라고 해도 상한을 넘으면 안 됩니다.
+//
+// 남은 몫을 읽고 나서 저장하는 방식이면 둘이 같은 값을 보고 각자 그만큼
+// 저장해 상한의 배수로 넘칩니다. 실제로 -limit 20에 60장이 들어갔습니다.
+func TestReserveNeverExceedsTheLimitUnderRace(t *testing.T) {
+	const limit = 100
+	cfg := baseConfig()
+	cfg.MaxImages = limit
+	crawler, _ := newCrawler(t, cfg, &rangeSource{latest: 60}, &fakeLease{frontier: 61})
+	crawler.stop = func() {}
+
+	var (
+		wg    sync.WaitGroup
+		total atomic.Int64
+	)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for k := 0; k < 40; k++ {
+				total.Add(int64(crawler.reserve(7)))
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := total.Load(); got != limit {
+		t.Errorf("작업자 16명이 나눠 가진 합이 %d입니다. 상한 %d이어야 합니다", got, limit)
+	}
+	if got := crawler.Saved(); got != limit {
+		t.Errorf("센 값이 %d입니다. 상한 %d이어야 합니다", got, limit)
+	}
+}
+
+// 상한이 없으면 달라는 대로 줘야 합니다.
+func TestReserveIsFreeWithoutLimit(t *testing.T) {
+	cfg := baseConfig()
+	crawler, _ := newCrawler(t, cfg, &rangeSource{latest: 60}, &fakeLease{frontier: 61})
+
+	if got := crawler.reserve(1000); got != 1000 {
+		t.Errorf("상한이 없는데 %d만 줬습니다", got)
 	}
 }
 

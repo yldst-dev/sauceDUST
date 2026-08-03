@@ -68,8 +68,8 @@ func cmdVerify(ctx context.Context, args []string) error {
 		return joinComma(names), nil
 	})
 
-	check("Qdrant", func() (string, error) {
-		index, err := rt.newQdrant()
+	check("벡터 색인", func() (string, error) {
+		index, err := rt.newIndex(true)
 		if err != nil {
 			return "", err
 		}

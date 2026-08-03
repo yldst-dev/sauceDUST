@@ -18,11 +18,11 @@ import (
 //  1. 축소본 파일
 //  2. PostgreSQL 메타데이터
 //  3. PostgreSQL 벡터 백업
-//  4. Qdrant 색인
+//  4. 벡터 색인
 //  5. 색인 완료 표시
 //
-// 4번이 실패해도 1~3번이 남아 있으면 나중에 Qdrant만 재구축할 수 있습니다.
-// 반대 순서였다면 Qdrant에만 있고 복구 불가능한 벡터가 생깁니다.
+// 4번이 실패해도 1~3번이 남아 있으면 나중에 색인만 다시 세울 수 있습니다.
+// 반대 순서였다면 색인에만 있고 복구 불가능한 벡터가 생깁니다.
 // 축소본이 맨 앞인 이유는 경로가 출처로 정해져 미리 알 수 있기 때문입니다.
 // 그래야 이미지 행을 한 번만 씁니다.
 type Ingest struct {
@@ -107,7 +107,7 @@ func (in *Ingest) Submit(ctx context.Context, batch []domain.IndexedImage) error
 		return err
 	}
 
-	// 3. 벡터 백업도 한 번에 보냅니다. Qdrant가 사라져도 여기서 복구합니다.
+	// 3. 벡터 백업도 한 번에 보냅니다. 색인이 사라져도 여기서 복구합니다.
 	stored := make([]domain.StoredVector, 0, len(batch)*len(in.models))
 	byCollection := map[string][]domain.VectorPoint{}
 	for i := range batch {
@@ -229,8 +229,8 @@ func (in *Ingest) modelIDs() []string {
 	return out
 }
 
-// RebuildIndex는 PostgreSQL에 남은 벡터로 Qdrant를 다시 채웁니다.
-// Qdrant 저장소를 잃어버려도 다시 크롤링할 필요가 없게 하는 복구 경로입니다.
+// RebuildIndex는 PostgreSQL에 남은 벡터로 색인을 다시 채웁니다.
+// 색인을 잃어버려도 다시 크롤링할 필요가 없게 하는 복구 경로입니다.
 func (in *Ingest) RebuildIndex(ctx context.Context, batchSize int) (int, error) {
 	if batchSize <= 0 {
 		batchSize = 512

@@ -25,6 +25,11 @@ type Config struct {
 	MaxConnections int
 	AcquireTimeout time.Duration
 
+	// IndexKind는 벡터를 어디에 둘지입니다. flat 또는 qdrant입니다.
+	IndexKind domain.IndexKind
+	// IndexDir은 flat일 때 색인 파일을 둘 곳입니다.
+	IndexDir string
+
 	QdrantURL    string
 	QdrantAPIKey string
 
@@ -115,11 +120,20 @@ func Load(root string) (*Config, error) {
 		}
 	}
 
+	indexKind, ok := domain.ParseIndexKind(r.str("SAUCEDUST_INDEX", ""))
+	if !ok {
+		return nil, fmt.Errorf("SAUCEDUST_INDEX 값이 잘못되었습니다: %q (flat 또는 qdrant)",
+			r.str("SAUCEDUST_INDEX", ""))
+	}
+
 	cfg := &Config{
 		NodeID:   nodeID,
 		Role:     role,
 		DataDir:  dataDir,
 		ThumbDir: expandPath(r.str("SAUCEDUST_THUMB_DIR", filepath.Join(dataDir, "thumbs")), root),
+
+		IndexKind: indexKind,
+		IndexDir:  expandPath(r.str("SAUCEDUST_INDEX_DIR", filepath.Join(dataDir, "index")), root),
 
 		DatabaseURL:    r.str("DATABASE_URL", "postgres://sauce:saucepass@localhost:5432/sauce"),
 		MaxConnections: r.intVal("POSTGRES_MAX_CONNECTIONS", 0),

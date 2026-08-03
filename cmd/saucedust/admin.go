@@ -129,7 +129,7 @@ func cmdModel(ctx context.Context, args []string) error {
 		checkpoint := fs.String("checkpoint", "", "가중치 이름")
 		size := fs.Int("vector-size", 0, "벡터 차원")
 		input := fs.Int("input-size", 224, "모델 입력 픽셀")
-		collection := fs.String("collection", "", "Qdrant 컬렉션 이름")
+		collection := fs.String("collection", "", "색인 컬렉션 이름")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -538,7 +538,7 @@ func cmdReembed(ctx context.Context, args []string) error {
 		return err
 	}
 
-	index, err := rt.newQdrant()
+	index, err := rt.newIndex(false)
 	if err != nil {
 		return err
 	}

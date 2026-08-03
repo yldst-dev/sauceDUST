@@ -119,6 +119,9 @@ func (s *reembedStore) PendingVectors(context.Context, string, int) ([]domain.St
 func (s *reembedStore) VectorsMissing(context.Context, []int64, string) ([]int64, error) {
 	return nil, nil
 }
+func (s *reembedStore) VectorsByIDs(context.Context, string, []int64) (map[int64][]float32, error) {
+	return nil, nil
+}
 
 type reembedIndex struct {
 	mu       sync.Mutex

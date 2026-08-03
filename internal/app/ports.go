@@ -77,6 +77,9 @@ type VectorRepository interface {
 	MarkIndexedBatch(ctx context.Context, imageIDs []int64, modelIDs []string) error
 	PendingVectors(ctx context.Context, modelID string, limit int) ([]domain.StoredVector, error)
 	VectorsMissing(ctx context.Context, imageIDs []int64, modelID string) ([]int64, error)
+	// VectorsByIDs는 원본 벡터를 아이디로 꺼냅니다. 납작한 색인이 추린
+	// 후보를 다시 재는 데 씁니다. 없는 아이디는 빠진 채로 옵니다.
+	VectorsByIDs(ctx context.Context, modelID string, imageIDs []int64) (map[int64][]float32, error)
 }
 
 // QueryCacheRepository는 같은 이미지를 다시 검색할 때 워커를 거치지 않게 합니다.

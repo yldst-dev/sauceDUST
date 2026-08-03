@@ -63,7 +63,7 @@ func cmdControl(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	index, err := rt.newQdrant()
+	index, err := rt.newIndex(false)
 	if err != nil {
 		return err
 	}

@@ -1,5 +1,7 @@
 package app
 
+import "saucedust/internal/domain"
+
 // 색인이 담을 수 있는 장수를 셈합니다.
 //
 // Qdrant는 줄인 벡터와 그래프를 메모리에 붙들고 있어야 하고, 그 양은
@@ -29,7 +31,15 @@ const (
 
 // IndexBytesPerImage는 이 모델 구성에서 한 장이 차지하는 상주 메모리입니다.
 // 모델마다 따로 컬렉션을 두므로 전부 더합니다.
-func IndexBytesPerImage(vectorSizes []int) int64 {
+//
+// 납작한 색인은 0입니다. 코드 파일을 주소 공간에 걸어 두기만 하므로
+// 반드시 램에 있어야 하는 몫이 없습니다. 1,190만 장을 넣고 재니 힙이
+// 2.5MB였습니다. 그 방식에서 한계를 정하는 것은 메모리가 아니라
+// 디스크이고, 램은 빠른지 느린지만 정합니다.
+func IndexBytesPerImage(kind domain.IndexKind, vectorSizes []int) int64 {
+	if kind != domain.IndexQdrant {
+		return 0
+	}
 	var total int64
 	for _, size := range vectorSizes {
 		if size <= 0 {
@@ -40,12 +50,30 @@ func IndexBytesPerImage(vectorSizes []int) int64 {
 	return total
 }
 
+// IndexDiskBytesPerImage는 납작한 색인에서 한 장이 차지하는 디스크입니다.
+//
+// 차원마다 1비트인 코드에 아이디 8바이트입니다. 768차원이면 104바이트라
+// 1,190만 장이 1.2GB쯤입니다. 원본 벡터는 이미 PostgreSQL에 있으므로
+// 여기 또 두지 않습니다.
+func IndexDiskBytesPerImage(vectorSizes []int) int64 {
+	var total int64
+	for _, size := range vectorSizes {
+		if size <= 0 {
+			continue
+		}
+		total += int64((size+bitsPerByte-1)/bitsPerByte) + indexIDBytes
+	}
+	return total
+}
+
+const indexIDBytes = 8
+
 // ImageCapacity는 Qdrant에 내어 줄 수 있는 메모리로 담을 장수를 냅니다.
 //
 // 벼랑 끝에서 돌리지 않도록 안전 여유를 뺍니다. OOM은 서서히 오는 것이
 // 아니라 한 번에 죽는 형태라 되돌릴 여지를 남겨야 합니다.
 func ImageCapacity(qdrantBytes int64, vectorSizes []int) int64 {
-	per := IndexBytesPerImage(vectorSizes)
+	per := IndexBytesPerImage(domain.IndexQdrant, vectorSizes)
 	if per <= 0 {
 		return 0
 	}

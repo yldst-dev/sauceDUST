@@ -22,6 +22,11 @@ func checkReembedRoom(ctx context.Context, rt *nodeRuntime, targets []domain.Emb
 	if rt.cfg.MaxIndexed <= 0 {
 		return nil
 	}
+	// 납작한 색인은 장수에 비례해 램을 붙들지 않습니다. 다시 계산해도
+	// 메모리 때문에 죽을 일이 없으므로 여기서 막을 이유가 없습니다.
+	if rt.cfg.IndexKind != domain.IndexQdrant {
+		return nil
+	}
 
 	all, err := rt.store.AllModels(ctx)
 	if err != nil {
@@ -36,7 +41,7 @@ func checkReembedRoom(ctx context.Context, rt *nodeRuntime, targets []domain.Emb
 	for _, m := range all {
 		sizes = append(sizes, m.VectorSize)
 	}
-	perImage := app.IndexBytesPerImage(sizes)
+	perImage := app.IndexBytesPerImage(domain.IndexQdrant, sizes)
 	if perImage <= 0 {
 		return nil
 	}

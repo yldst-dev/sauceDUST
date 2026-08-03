@@ -32,7 +32,22 @@ func reportCapacity(ctx context.Context, rt *nodeRuntime, active []domain.Embedd
 	for _, m := range models {
 		sizes = append(sizes, m.VectorSize)
 	}
-	perImage := app.IndexBytesPerImage(sizes)
+	// 납작한 색인은 메모리가 장수를 제한하지 않습니다. 걸어 두기만 하므로
+	// 모자라면 죽는 대신 느려집니다. 겁줄 일이 아니라 디스크를 알려 줍니다.
+	if rt.cfg.IndexKind != domain.IndexQdrant {
+		perDisk := app.IndexDiskBytesPerImage(sizes)
+		if perDisk <= 0 {
+			return
+		}
+		rt.log.Info("납작한 색인이라 메모리가 담을 장수를 제한하지 않습니다",
+			slog.Int("컬렉션 수", len(sizes)),
+			slog.Int64("장당 디스크 바이트", perDisk),
+			slog.String("1,190만 장이면", humanBytes(11_900_000*perDisk)),
+			slog.String("색인 위치", rt.cfg.IndexDir))
+		return
+	}
+
+	perImage := app.IndexBytesPerImage(domain.IndexQdrant, sizes)
 	if perImage <= 0 {
 		return
 	}

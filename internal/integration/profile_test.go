@@ -144,3 +144,7 @@ func (nopVectors) PendingVectors(context.Context, string, int) ([]domain.StoredV
 func (nopVectors) VectorsMissing(context.Context, []int64, string) ([]int64, error) {
 	return nil, nil
 }
+
+func (nopVectors) VectorsByIDs(context.Context, string, []int64) (map[int64][]float32, error) {
+	return nil, nil
+}

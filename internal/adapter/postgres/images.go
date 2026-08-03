@@ -266,8 +266,8 @@ WHERE image_id = $1 AND model_id = ANY($2)`, imageID, modelIDs)
 	return err
 }
 
-// PendingVectors는 Qdrant에 아직 반영되지 않은 벡터를 돌려줍니다.
-// Qdrant를 잃어버렸을 때 PostgreSQL만으로 색인을 재구축하는 경로입니다.
+// PendingVectors는 색인에 아직 반영되지 않은 벡터를 돌려줍니다.
+// 색인을 잃어버렸을 때 PostgreSQL만으로 다시 세우는 경로입니다.
 func (s *Store) PendingVectors(ctx context.Context, modelID string, limit int) ([]domain.StoredVector, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT image_id, vector FROM image_vectors
@@ -293,6 +293,44 @@ LIMIT $2`, modelID, limit)
 			return nil, fmt.Errorf("image %d 벡터를 해석하지 못했습니다: %w", imageID, err)
 		}
 		out = append(out, domain.StoredVector{ImageID: imageID, ModelID: modelID, Values: values})
+	}
+	return out, rows.Err()
+}
+
+// VectorsByIDs는 주어진 이미지들의 원본 벡터를 돌려줍니다.
+//
+// 납작한 색인이 재점수에 씁니다. 훑기는 부호만 남긴 이진 코드로 후보를
+// 추리는데, 그대로 쓰면 1등 정답률이 89.7퍼센트까지 떨어집니다. 추린
+// 몇십 건만 원본으로 다시 재면 96퍼센트대로 올라옵니다.
+//
+// 없는 아이디는 그냥 빠집니다. 색인 파일은 파생물이라 이미 지운 그림을
+// 아직 들고 있을 수 있는데, 그것을 오류로 만들면 검색 전체가 실패합니다.
+func (s *Store) VectorsByIDs(ctx context.Context, modelID string, imageIDs []int64) (map[int64][]float32, error) {
+	if len(imageIDs) == 0 {
+		return map[int64][]float32{}, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT image_id, vector FROM image_vectors
+WHERE model_id = $1 AND image_id = ANY($2)`, modelID, imageIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[int64][]float32, len(imageIDs))
+	for rows.Next() {
+		var (
+			imageID int64
+			raw     []byte
+		)
+		if err := rows.Scan(&imageID, &raw); err != nil {
+			return nil, err
+		}
+		values, err := domain.DecodeVector(raw)
+		if err != nil {
+			return nil, fmt.Errorf("image %d 벡터를 해석하지 못했습니다: %w", imageID, err)
+		}
+		out[imageID] = values
 	}
 	return out, rows.Err()
 }

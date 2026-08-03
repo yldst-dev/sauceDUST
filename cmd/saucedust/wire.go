@@ -6,11 +6,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"saucedust/internal/adapter/danbooru"
 	"saucedust/internal/adapter/embedworker"
 	"saucedust/internal/adapter/filestore"
+	"saucedust/internal/adapter/flatindex"
 	"saucedust/internal/adapter/httpapi"
 	"saucedust/internal/adapter/netpath"
 	"saucedust/internal/adapter/postgres"
@@ -28,9 +30,22 @@ type nodeRuntime struct {
 	cfg   *config.Config
 	log   *slog.Logger
 	store *postgres.Store
+
+	indexOnce  sync.Once
+	index      app.VectorIndex
+	indexClose func() error
+	indexErr   error
 }
 
 func (r *nodeRuntime) Close() {
+	// 색인을 먼저 닫습니다. 걸어 둔 파일과 폴더 잠금을 놓아야 다음
+	// 명령이 들어올 수 있습니다.
+	if r.indexClose != nil {
+		if err := r.indexClose(); err != nil {
+			r.log.Warn("색인을 닫지 못했습니다", slog.String("error", err.Error()))
+		}
+		r.indexClose = nil
+	}
 	if r.store != nil {
 		r.store.Close()
 	}
@@ -115,13 +130,37 @@ func (r *nodeRuntime) newEmbedder() (*embedworker.Client, error) {
 	})
 }
 
-func (r *nodeRuntime) newQdrant() (*qdrant.Client, error) {
-	return qdrant.New(qdrant.Options{
-		BaseURL:  r.cfg.QdrantURL,
-		APIKey:   r.cfg.QdrantAPIKey,
-		Quantize: true,
-		Log:      r.log,
+// newIndex는 벡터 색인을 냅니다. 프로세스 안에서 하나만 둡니다.
+//
+// 납작한 색인은 파일을 직접 붙입니다. 인스턴스가 둘이면 각자 제 자리 수를
+// 세고 그 자리에 쓰므로 서로를 덮습니다. Qdrant는 서버라 몇 개를 만들어도
+// 괜찮았지만 같은 배선을 쓰므로 여기서 하나로 묶습니다.
+//
+// readOnly는 처음 부를 때만 봅니다. 한 프로세스가 두 역할을 하지 않습니다.
+func (r *nodeRuntime) newIndex(readOnly bool) (app.VectorIndex, error) {
+	r.indexOnce.Do(func() {
+		switch r.cfg.IndexKind {
+		case domain.IndexQdrant:
+			r.index, r.indexErr = qdrant.New(qdrant.Options{
+				BaseURL:  r.cfg.QdrantURL,
+				APIKey:   r.cfg.QdrantAPIKey,
+				Quantize: true,
+				Log:      r.log,
+			})
+		default:
+			var store *flatindex.Store
+			store, r.indexErr = flatindex.New(flatindex.Options{
+				Dir:      r.cfg.IndexDir,
+				Source:   r.store,
+				ReadOnly: readOnly,
+				Log:      r.log,
+			})
+			if r.indexErr == nil {
+				r.index, r.indexClose = store, store.Close
+			}
+		}
 	})
+	return r.index, r.indexErr
 }
 
 // pathMemory는 학습한 경로를 얼마나 오래 믿을지입니다.
@@ -225,7 +264,7 @@ func (r *nodeRuntime) newBot(search app.ImageSearcher) (*app.Bot, error) {
 
 // newIngest는 control 노드에서 결과를 실제로 저장하는 유스케이스를 만듭니다.
 func (r *nodeRuntime) newIngest(ctx context.Context, models []domain.EmbeddingModel) (*app.Ingest, error) {
-	index, err := r.newQdrant()
+	index, err := r.newIndex(false)
 	if err != nil {
 		return nil, err
 	}

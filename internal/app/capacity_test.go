@@ -26,7 +26,7 @@ func TestBytesPerImageMatchesMeasurement(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		got := IndexBytesPerImage(tc.dims)
+		got := IndexBytesPerImage(domain.IndexQdrant, tc.dims)
 		if diff := got - tc.want; diff > tc.tol || diff < -tc.tol {
 			t.Errorf("%v차원이 장당 %d바이트입니다. %d 근처를 기대했습니다",
 				tc.dims, got, tc.want)
@@ -35,10 +35,10 @@ func TestBytesPerImageMatchesMeasurement(t *testing.T) {
 }
 
 func TestBytesPerImageIgnoresBadSizes(t *testing.T) {
-	if got := IndexBytesPerImage([]int{0, -5}); got != 0 {
+	if got := IndexBytesPerImage(domain.IndexQdrant, []int{0, -5}); got != 0 {
 		t.Errorf("쓸 수 없는 차원에서 %d가 나왔습니다", got)
 	}
-	if got := IndexBytesPerImage(nil); got != 0 {
+	if got := IndexBytesPerImage(domain.IndexQdrant, nil); got != 0 {
 		t.Errorf("모델이 없는데 %d가 나왔습니다", got)
 	}
 }
@@ -405,6 +405,38 @@ func TestCapacityThresholdsAgree(t *testing.T) {
 		if !crawlerSaysFull && ingestSaysFull {
 			t.Errorf("담긴 %d장, 상한 %d에서 수집은 받아 오는데 적재가 거절합니다."+
 				" 이 상태에서는 빠져나갈 수 없습니다", count, limit)
+		}
+	}
+}
+
+// 납작한 색인은 걸어 두기만 하므로 장당 상주 메모리가 0이어야 합니다.
+// 0이 아니면 시작할 때 없는 한계를 알려 주고, 안 두어도 되는 상한을
+// 두게 만듭니다.
+func TestFlatIndexHasNoResidentCostPerImage(t *testing.T) {
+	for _, dims := range [][]int{{768}, {768, 512}, {512}} {
+		if got := IndexBytesPerImage(domain.IndexFlat, dims); got != 0 {
+			t.Errorf("차원 %v에서 장당 %d바이트가 나왔습니다. 0이어야 합니다", dims, got)
+		}
+	}
+}
+
+// 납작한 색인에서 한계를 정하는 것은 디스크입니다.
+// 768차원이면 코드 96바이트에 아이디 8바이트입니다.
+func TestFlatIndexDiskPerImage(t *testing.T) {
+	cases := []struct {
+		dims []int
+		want int64
+	}{
+		{[]int{768}, 104},
+		{[]int{512}, 72},
+		{[]int{768, 512}, 176},
+		{[]int{100}, 21},
+		{nil, 0},
+		{[]int{0, -3}, 0},
+	}
+	for _, tc := range cases {
+		if got := IndexDiskBytesPerImage(tc.dims); got != tc.want {
+			t.Errorf("차원 %v에서 %d바이트인데 %d바이트여야 합니다", tc.dims, got, tc.want)
 		}
 	}
 }

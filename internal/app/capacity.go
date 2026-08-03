@@ -9,11 +9,19 @@ package app
 // 그래서 다 모은 뒤에 줄이는 방법이 없습니다. 차기 전에 멈춰야 합니다.
 
 // 30만 점을 넣어 두고 컨테이너 상한을 낮춰 가며 잰 값입니다.
-// 768차원이 장당 1,044바이트, 512차원이 712바이트였습니다.
-// 두 점을 이으면 기울기 1.3, 절편 48입니다.
+//
+// 이진 양자화에 그래프까지 디스크로 내린 구성입니다. 768차원에서 하한이
+// 250MB였고 빈 Qdrant가 152MB이므로 장당 334바이트입니다. 그중 벡터가
+// 차원의 8분의 1인 96바이트이고 나머지 238바이트가 그래프와 부대 비용
+// 입니다. 512차원은 벡터만 64바이트로 줄어듭니다.
+//
+// 앞선 구성(int8에 그래프를 램에)은 장당 1,046바이트였습니다. 이 차이가
+// 8GB에서 410만 장과 1,190만 장을 가릅니다.
+//
+// 측정점이 768차원 하나뿐이라 512차원은 벡터 몫만 줄여 셈한 값입니다.
 const (
-	bytesPerDim   = 1.3
-	bytesPerImage = 48
+	bitsPerByte  = 8
+	bytesPerNode = 238
 
 	// 빈 Qdrant가 쓰는 몫입니다. 장수와 무관합니다.
 	qdrantBaseBytes = 160 << 20
@@ -27,7 +35,7 @@ func IndexBytesPerImage(vectorSizes []int) int64 {
 		if size <= 0 {
 			continue
 		}
-		total += int64(float64(size)*bytesPerDim) + bytesPerImage
+		total += int64(size/bitsPerByte) + bytesPerNode
 	}
 	return total
 }

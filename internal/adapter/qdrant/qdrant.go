@@ -75,24 +75,12 @@ func (c *Client) EnsureCollection(ctx context.Context, m domain.EmbeddingModel) 
 		return c.verifyCollection(ctx, m)
 	}
 
-	// on_disk를 명시합니다. 지금 판의 기본값도 원본을 memmap으로 두지만
-	// 문서에 적히지 않은 기본값이라, 판이 올라가며 바뀌면 메모리 요건이
-	// 조용히 몇 배로 뜁니다. 담을 장수 계산이 그 전제 위에 있습니다.
 	body := map[string]any{
-		"vectors": map[string]any{
-			"size":     m.VectorSize,
-			"distance": distanceName(m.Distance),
-			"on_disk":  true,
-		},
+		"vectors":     vectorParams(m),
+		"hnsw_config": hnswParams(),
 	}
 	if c.quantize {
-		body["quantization_config"] = map[string]any{
-			"scalar": map[string]any{
-				"type":       "int8",
-				"quantile":   0.99,
-				"always_ram": true,
-			},
-		}
+		body["quantization_config"] = quantParams()
 	}
 
 	if err := c.call(ctx, http.MethodPut, "/collections/"+m.Collection, body, nil); err != nil {
@@ -114,6 +102,12 @@ func (c *Client) verifyCollection(ctx context.Context, m domain.EmbeddingModel) 
 						OnDisk   *bool  `json:"on_disk"`
 					} `json:"vectors"`
 				} `json:"params"`
+				HNSW struct {
+					OnDisk *bool `json:"on_disk"`
+				} `json:"hnsw_config"`
+				Quantization *struct {
+					Binary *struct{} `json:"binary"`
+				} `json:"quantization_config"`
 			} `json:"config"`
 		} `json:"result"`
 	}
@@ -131,13 +125,71 @@ func (c *Client) verifyCollection(ctx context.Context, m domain.EmbeddingModel) 
 		return fmt.Errorf("%w: 컬렉션 %s의 거리가 %s인데 모델 %s는 %s입니다",
 			domain.ErrModelMismatch, m.Collection, vectors.Distance, m.ID, want)
 	}
-	if vectors.OnDisk == nil || !*vectors.OnDisk {
+	// 셋 중 하나라도 어긋나면 옮깁니다. 담을 장수 계산이 이 셋 위에
+	// 서 있어서, 하나만 달라도 실제 메모리가 계산보다 몇 배가 됩니다.
+	cfg := payload.Result.Config
+	needsMove := vectors.OnDisk == nil || !*vectors.OnDisk ||
+		cfg.HNSW.OnDisk == nil || !*cfg.HNSW.OnDisk
+	if c.quantize && (cfg.Quantization == nil || cfg.Quantization.Binary == nil) {
+		needsMove = true
+	}
+	if needsMove {
 		return c.moveVectorsToDisk(ctx, m.Collection)
 	}
 	return nil
 }
 
-// moveVectorsToDisk는 예전에 만든 컬렉션을 on_disk로 옮깁니다.
+// vectorParams는 벡터 저장 방식입니다.
+//
+// on_disk를 명시합니다. 지금 판의 기본값도 원본을 memmap으로 두지만
+// 문서에 적히지 않은 기본값이라, 판이 올라가며 바뀌면 메모리 요건이
+// 조용히 몇 배로 뜁니다. 담을 장수 계산이 그 전제 위에 있습니다.
+func vectorParams(m domain.EmbeddingModel) map[string]any {
+	return map[string]any{
+		"size":     m.VectorSize,
+		"distance": distanceName(m.Distance),
+		"on_disk":  true,
+	}
+}
+
+// hnswParams는 그래프도 디스크에 둡니다.
+//
+// 그래프가 장당 상주 비용의 대부분이었습니다. 30만 점 768차원에서 잰
+// 값입니다. int8에 그래프를 램에 두면 하한이 450MB인데, 이진으로 줄이고
+// 그래프까지 내리면 250MB입니다. 장당 1,046바이트가 334바이트가 됩니다.
+// 이 차이가 8GB에서 410만 장과 1,190만 장을 가릅니다.
+func hnswParams() map[string]any {
+	return map[string]any{"on_disk": true}
+}
+
+// quantParams는 이진 양자화입니다.
+//
+// int8은 차원마다 1바이트, 이진은 1비트라 8분의 1입니다. 정확도 손실은
+// 재점수로 되찾습니다. 실제 SigLIP 임베딩 2,000장에 망가뜨린 질의
+// 2,000건을 넣어 재니 1등 정답률이 int8 96.5퍼센트, 이진에 재점수
+// 4배가 96.1퍼센트였습니다. 재점수 없이는 89.7퍼센트로 떨어지므로
+// 검색할 때 반드시 켜야 합니다.
+func quantParams() map[string]any {
+	return map[string]any{
+		"binary": map[string]any{"always_ram": true},
+	}
+}
+
+// searchQuant는 검색할 때 붙이는 재점수 설정입니다.
+//
+// 이진으로 후보를 넓게 뽑고 디스크의 원본으로 다시 점수를 매깁니다.
+// 4배로 뽑을 때 int8과 사실상 같아졌고, 2배면 95.1퍼센트였습니다.
+// 원본은 어차피 디스크에 있으므로 읽는 비용이 이미 값에 들어 있습니다.
+func searchQuant() map[string]any {
+	return map[string]any{
+		"quantization": map[string]any{
+			"rescore":      true,
+			"oversampling": 4.0,
+		},
+	}
+}
+
+// moveVectorsToDisk는 예전에 만든 컬렉션을 지금 방식으로 옮깁니다.
 //
 // 담을 장수 계산이 "원본은 디스크, 줄인 것만 메모리"를 전제로 합니다.
 // 만들 때 이 값을 넣기 전에 생긴 컬렉션은 그 전제 밖에 있어서, 같은
@@ -147,13 +199,18 @@ func (c *Client) verifyCollection(ctx context.Context, m domain.EmbeddingModel) 
 // 문서에 적힌 기본값이 아니라 판이 올라가며 바뀔 수 있습니다. 명시해 둡니다.
 func (c *Client) moveVectorsToDisk(ctx context.Context, name string) error {
 	// 이름 없는 기본 벡터라 빈 문자열을 키로 씁니다.
+	// 이름 없는 기본 벡터라 빈 문자열을 키로 씁니다.
 	body := map[string]any{
-		"vectors": map[string]any{"": map[string]any{"on_disk": true}},
+		"vectors":     map[string]any{"": map[string]any{"on_disk": true}},
+		"hnsw_config": hnswParams(),
+	}
+	if c.quantize {
+		body["quantization_config"] = quantParams()
 	}
 	if err := c.call(ctx, http.MethodPatch, "/collections/"+name, body, nil); err != nil {
-		return fmt.Errorf("컬렉션 %s를 on_disk로 옮기지 못했습니다: %w", name, err)
+		return fmt.Errorf("컬렉션 %s를 옮기지 못했습니다: %w", name, err)
 	}
-	c.log.Info("예전 컬렉션을 on_disk로 옮겼습니다. 재정리가 끝날 때까지 잠시 느릴 수 있습니다",
+	c.log.Info("예전 컬렉션을 지금 방식으로 옮겼습니다. 재정리가 끝날 때까지 잠시 느릴 수 있습니다",
 		slog.String("collection", name))
 	return nil
 }
@@ -207,6 +264,7 @@ func (c *Client) Search(ctx context.Context, collection string, vector []float32
 		"query":        vector,
 		"limit":        limit,
 		"with_payload": false,
+		"params":       searchQuant(),
 	}
 
 	var payload struct {

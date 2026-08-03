@@ -11,16 +11,18 @@ import (
 )
 
 // 실측에서 뽑은 값과 맞아야 합니다.
-// 768차원이 장당 1,044바이트, 512차원이 712바이트였습니다.
+//
+// 이진 양자화에 그래프까지 디스크로 내린 구성에서, 30만 점 768차원의
+// 메모리 하한이 250MB였고 빈 Qdrant가 152MB이므로 장당 334바이트입니다.
 func TestBytesPerImageMatchesMeasurement(t *testing.T) {
 	tests := []struct {
 		dims []int
 		want int64
 		tol  int64
 	}{
-		{[]int{768}, 1044, 50},
-		{[]int{512}, 712, 50},
-		{[]int{768, 512}, 1756, 100},
+		{[]int{768}, 334, 20},
+		{[]int{512}, 302, 20},
+		{[]int{768, 512}, 636, 40},
 	}
 
 	for _, tc := range tests {
@@ -41,18 +43,26 @@ func TestBytesPerImageIgnoresBadSizes(t *testing.T) {
 	}
 }
 
-// 8 GB 중 Qdrant에 4 GB를 줬을 때 문서에 적은 장수가 나와야 합니다.
+// 8 GB 상자가 목표인 1,190만 장을 담을 수 있어야 합니다.
+//
+// 이것이 이진 양자화와 디스크 그래프를 고른 이유 전부입니다. 앞선
+// 구성에서는 같은 8 GB에 410만 장, 목표의 34퍼센트만 담겼습니다.
+// 이 시험이 깨지면 8 GB 배포가 목표를 못 채운다는 뜻입니다.
 func TestCapacityMatchesTheDocumentedNumbers(t *testing.T) {
 	const gb = 1 << 30
+	const target = 11_900_000
 
-	one := ImageCapacity(4*gb+qdrantBaseBytes, []int{768})
-	if one < 3_000_000 || one > 5_000_000 {
-		t.Errorf("모델 하나에 %d장이 나왔습니다. 400만 장 근처를 기대했습니다", one)
+	// 8 GB에서 운영체제, 워커, PostgreSQL을 뺀 몫입니다.
+	const qdrantShare = 5*gb + qdrantBaseBytes
+
+	one := ImageCapacity(qdrantShare, []int{768})
+	if one < target {
+		t.Errorf("모델 하나에 %d장이 나왔습니다. 목표 %d장에 못 미칩니다", one, target)
 	}
 
-	two := ImageCapacity(4*gb+qdrantBaseBytes, []int{768, 512})
-	if two < 1_800_000 || two > 3_000_000 {
-		t.Errorf("모델 둘에 %d장이 나왔습니다. 240만 장 근처를 기대했습니다", two)
+	two := ImageCapacity(qdrantShare, []int{768, 512})
+	if two < 5_000_000 {
+		t.Errorf("모델 둘에 %d장이 나왔습니다. 500만 장은 넘어야 합니다", two)
 	}
 	if two >= one {
 		t.Error("모델을 늘렸는데 담을 장수가 줄지 않습니다")

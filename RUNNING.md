@@ -91,6 +91,40 @@ PostgreSQL과 Qdrant뿐이고, 그쪽은 넣어도 손해가 없습니다. 잰 �
 Windows에서는 `./saucedust` 대신 `saucedust-windows-amd64.exe`로 읽으십시오.
 나머지는 같습니다.
 
+## 리눅스라면 명령 하나로 끝납니다
+
+`install`이 꾸러미 설치부터 PostgreSQL 만들기, 토큰 만들기, systemd 등록까지
+합니다. 채울 설정이 없습니다. Rocky, RHEL, Debian, Ubuntu, openSUSE, Arch를
+알아봅니다.
+
+중앙 노드에서 먼저 이것을 돌립니다.
+
+```bash
+sudo ./saucedust install -role control -bind 10.0.0.10:8000 -allow-from 10.0.0.0/24
+```
+
+무엇을 할지 보여 주고 물어봅니다. 끝나면 수집 노드용 명령을 한 줄로 내줍니다.
+그 줄을 수집 노드에서 그대로 돌리십시오.
+
+```bash
+sudo ./saucedust install -role worker -join eyJjb250cm9sX3VybCI6...
+```
+
+`-join` 값 안에 중앙 주소와 토큰과 데이터베이스 비밀번호가 함께 들어 있습니다.
+**토큰과 같은 무게로 다루십시오.** 감춘 것이 아니라 옮기기 쉽게 묶은 것입니다.
+
+| | |
+|---|---|
+| 설치 자리 | `/opt/saucedust`. `-prefix`로 바꿉니다 |
+| 도는 계정 | `saucedust`. root로 돌지 않습니다 |
+| 서비스 | `saucedust-embed`, 그리고 역할에 따라 `saucedust-control` 또는 `saucedust-crawl` |
+| 설정 | `/opt/saucedust/.env`. 토큰이 들어 있어 600입니다 |
+
+다시 돌려도 됩니다. 이미 있는 `.env`는 건드리지 않고, 토큰과 비밀번호도
+그대로 이어 씁니다. 새로 만들면 붙어 있던 수집 노드가 전부 떨어집니다.
+
+아래 절들은 손으로 할 때, 또는 Windows와 macOS에서 쓸 때 보십시오.
+
 ## 여러 대에서 중앙으로 모으기
 
 컴퓨터를 늘리는 이유는 **Danbooru가 IP 단위로 속도를 제한하기 때문**입니다.

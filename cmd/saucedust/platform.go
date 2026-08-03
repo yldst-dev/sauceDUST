@@ -141,6 +141,83 @@ func pythonHint(goos, family string) string {
 	}
 }
 
+// installerFor는 그 갈래에서 꾸러미를 깔 명령을 냅니다.
+// 갈래를 모르면 빈 목록을 내고, 부르는 쪽이 손으로 깔라고 알려 줍니다.
+func installerFor(family string) []string {
+	switch family {
+	case "rhel":
+		return []string{"dnf", "-y", "install"}
+	case "debian":
+		return []string{"apt-get", "-y", "install"}
+	case "suse":
+		return []string{"zypper", "-n", "install"}
+	case "arch":
+		return []string{"pacman", "-S", "--noconfirm", "--needed"}
+	}
+	return nil
+}
+
+// refreshFor는 꾸러미 목록을 새로 받는 명령입니다. 필요 없으면 빕니다.
+//
+// Debian은 이것을 안 하면 갓 만든 상자에서 install이 반드시 실패합니다.
+// 목록이 비어 있어서 있는 꾸러미도 없다고 합니다.
+func refreshFor(family string) []string {
+	switch family {
+	case "debian":
+		return []string{"apt-get", "-y", "update"}
+	case "arch":
+		return []string{"pacman", "-Sy"}
+	}
+	return nil
+}
+
+// packagesFor는 그 갈래에서 깔 꾸러미 이름입니다.
+//
+// 중앙 노드는 PostgreSQL 서버까지 필요하고 수집 노드는 클라이언트만
+// 있으면 됩니다. 수집 노드에 서버를 깔면 쓰지도 않는 것이 메모리를
+// 먹습니다. 2GB에서는 그것이 차이를 만듭니다.
+func packagesFor(family string, withServer bool) []string {
+	var pkgs []string
+	switch family {
+	case "rhel":
+		pkgs = []string{"python3.12", "python3.12-pip", "postgresql"}
+		if withServer {
+			pkgs = append(pkgs, "postgresql-server")
+		}
+	case "debian":
+		pkgs = []string{"python3.12", "python3.12-venv", "python3-pip", "postgresql-client"}
+		if withServer {
+			pkgs = append(pkgs, "postgresql")
+		}
+	case "suse":
+		pkgs = []string{"python312", "python312-pip", "postgresql"}
+		if withServer {
+			pkgs = append(pkgs, "postgresql-server")
+		}
+	case "arch":
+		pkgs = []string{"python", "postgresql-libs"}
+		if withServer {
+			pkgs = []string{"python", "postgresql"}
+		}
+	}
+	return pkgs
+}
+
+// initdbFor는 PostgreSQL 자료 폴더를 처음 만드는 명령입니다.
+//
+// Debian은 꾸러미가 깔릴 때 알아서 만들고 띄웁니다. RHEL 갈래는
+// 안 만들어서, 이것을 빠뜨리면 systemctl start가 그냥 실패합니다.
+func initdbFor(family string) []string {
+	switch family {
+	case "rhel":
+		return []string{"postgresql-setup", "--initdb"}
+	case "suse", "arch":
+		// 이 둘은 postgres 사용자로 initdb를 직접 부릅니다.
+		return []string{"initdb"}
+	}
+	return nil
+}
+
 // workerStartCommand는 워커를 띄우는 명령을 그 운영체제 표기로 냅니다.
 func workerStartCommand(goos, workerDir string) string {
 	uvicorn := venvExe(goos, ".venv", "uvicorn")

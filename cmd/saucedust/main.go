@@ -54,6 +54,8 @@ func run() error {
 		return cmdProbe(ctx, args)
 	case "ranges":
 		return cmdRanges(ctx, args)
+	case "install":
+		return cmdInstall(ctx, args)
 	case "setup":
 		return cmdSetup(ctx, args)
 	case "doctor":
@@ -94,6 +96,7 @@ func usage() {
   saucedust node reclaim       응답 없는 노드의 임대를 회수합니다
   saucedust model ls           등록된 임베딩 모델을 보여줍니다
   saucedust model add          임베딩 모델을 등록합니다
+  saucedust model sync         워커가 싣는 모델을 그대로 등록합니다
   saucedust probe              네트워크 경로를 측정합니다
   saucedust ranges status      수집 구간 상태를 보여줍니다
   saucedust ranges failed      재시도를 소진한 구간을 봅니다

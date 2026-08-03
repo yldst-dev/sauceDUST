@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -88,7 +90,7 @@ func cmdNode(ctx context.Context, args []string) error {
 
 func cmdModel(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("model 하위 명령이 필요합니다: ls, add")
+		return errors.New("model 하위 명령이 필요합니다: ls, add, sync")
 	}
 
 	rt, err := boot(ctx)
@@ -159,9 +161,87 @@ func cmdModel(ctx context.Context, args []string) error {
 			slog.String("id", m.ID), slog.Int("vector_size", m.VectorSize))
 		return nil
 
+	case "sync":
+		// 워커가 싣는 모델을 그대로 등록합니다.
+		//
+		// 손으로 add를 부르면 차원이나 백엔드를 하나 잘못 적기 쉽고, 그러면
+		// 오류 없이 검색 결과만 조용히 이상해집니다. 워커가 실제로 쓰는
+		// models.json을 그대로 읽어 옮기면 어긋날 여지가 없습니다.
+		specs, err := workerModelSpecs()
+		if err != nil {
+			return err
+		}
+		for _, spec := range specs {
+			m := spec.model()
+			if err := rt.store.UpsertModel(ctx, m); err != nil {
+				return fmt.Errorf("모델 %s를 등록하지 못했습니다: %w", m.ID, err)
+			}
+			fmt.Printf("  %s (%d차원, %s)\n", m.ID, m.VectorSize, m.Kind)
+		}
+		rt.log.Info("워커가 싣는 모델을 등록했습니다", slog.Int("개수", len(specs)))
+		return nil
+
 	default:
 		return fmt.Errorf("알 수 없는 model 하위 명령입니다: %s", args[0])
 	}
+}
+
+// workerModelSpec은 python/worker/models.json의 한 항목입니다.
+type workerModelSpec struct {
+	ID         string `json:"id"`
+	Kind       string `json:"kind"`
+	Backend    string `json:"backend"`
+	Checkpoint string `json:"checkpoint"`
+	VectorSize int    `json:"vector_size"`
+	InputSize  int    `json:"input_size"`
+}
+
+func (s workerModelSpec) model() domain.EmbeddingModel {
+	kind := domain.ModelKind(s.Kind)
+	if kind != domain.ModelCopy && kind != domain.ModelSemantic {
+		kind = domain.ModelCopy
+	}
+	input := s.InputSize
+	if input <= 0 {
+		input = 224
+	}
+	return domain.EmbeddingModel{
+		ID: s.ID, Kind: kind, Backend: s.Backend, Checkpoint: s.Checkpoint,
+		VectorSize: s.VectorSize, Distance: "cosine", Collection: s.ID,
+		InputSize: input, Active: true,
+	}
+}
+
+// workerModelSpecs는 워커 폴더의 models.json을 읽습니다.
+func workerModelSpecs() ([]workerModelSpec, error) {
+	root, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	dir, err := findWorkerDir(findRoot(root))
+	if err != nil {
+		return nil, err
+	}
+
+	path := filepath.Join(dir, "models.json")
+	raw, err := os.ReadFile(path) // #nosec G304 -- 워커 폴더 기준 고정 이름입니다
+	if err != nil {
+		return nil, fmt.Errorf("%s를 읽지 못했습니다: %w", path, err)
+	}
+
+	var specs []workerModelSpec
+	if err := json.Unmarshal(raw, &specs); err != nil {
+		return nil, fmt.Errorf("%s를 해석하지 못했습니다: %w", path, err)
+	}
+	if len(specs) == 0 {
+		return nil, fmt.Errorf("%s에 모델이 없습니다", path)
+	}
+	for _, spec := range specs {
+		if spec.ID == "" || spec.VectorSize <= 0 {
+			return nil, fmt.Errorf("%s에 id나 vector_size가 빠진 항목이 있습니다", path)
+		}
+	}
+	return specs, nil
 }
 
 // cmdProbe는 호스트별로 어떤 네트워크 경로가 통하는지, 어느 쪽이 빠른지 잽니다.

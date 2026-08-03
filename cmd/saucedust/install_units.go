@@ -111,6 +111,33 @@ func (p *installPlan) unitBody(spec unitSpec) string {
 	return b.String()
 }
 
+// writeJoinFile은 수집 노드용 값을 파일로도 남깁니다.
+//
+// 보고에 찍어 주기만 하면 사람이 눈으로 옮겨야 합니다. 자동으로 두 대를
+// 세우는 대본은 그것을 읽을 수 없습니다. 파일로 두면 qm guest exec나
+// ssh로 그대로 꺼내 갑니다.
+//
+// 비밀이 들어 있으므로 본인만 읽게 둡니다.
+func (p *installPlan) writeJoinFile() error {
+	if p.role != "control" {
+		return nil
+	}
+	blob, err := p.joinBlob()
+	if err != nil {
+		return err
+	}
+
+	target := filepath.Join(p.prefix, "join.txt")
+	if err := os.WriteFile(target, []byte(blob+"\n"), 0o600); err != nil {
+		return fmt.Errorf("%s를 쓰지 못했습니다: %w", target, err)
+	}
+	uid, gid, err := lookupIDs(p.account)
+	if err != nil {
+		return err
+	}
+	return os.Chown(target, uid, gid)
+}
+
 // installUnits는 유닛을 쓰고 켜고 띄웁니다.
 func (p *installPlan) installUnits(ctx context.Context) error {
 	list := p.units()

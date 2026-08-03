@@ -394,6 +394,12 @@ func (p *installPlan) apply(ctx context.Context) error {
 		}
 	}
 
+	// 대본이 읽어 갈 수 있게 파일로도 남깁니다. 여기서 실패해도 설치는
+	// 이미 끝났으므로 알려 주기만 하고 멈추지 않습니다.
+	if err := p.writeJoinFile(); err != nil {
+		fmt.Printf("  수집 노드용 값을 파일로 남기지 못했습니다: %v\n", err)
+	}
+
 	p.report()
 	return nil
 }

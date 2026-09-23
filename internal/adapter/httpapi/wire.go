@@ -168,8 +168,13 @@ type StatsView struct {
 	SavedPerSec  float64          `json:"saved_per_sec"`
 	// HighWatermark는 지금까지 확인한 가장 최신 게시물 번호입니다.
 	// BackfillBefore는 과거로 내려가는 수집 경계입니다. 둘 사이가 이미 훑은 구간입니다.
-	HighWatermark  int64 `json:"high_watermark"`
-	BackfillBefore int64 `json:"backfill_before"`
+	HighWatermark   int64  `json:"high_watermark"`
+	BackfillBefore  int64  `json:"backfill_before"`
+	SourceSite      string `json:"source_site"`
+	ScopeKey        string `json:"scope_key"`
+	RangesTotal     int64  `json:"ranges_total"`
+	RangesEmpty     int64  `json:"ranges_empty"`
+	RangesExhausted int64  `json:"ranges_exhausted"`
 }
 
 type SearchHitView struct {

@@ -37,6 +37,9 @@ type Config struct {
 	ControlToken string
 	ControlBind  string
 
+	AdminUser     string
+	AdminPassword string
+
 	EmbedWorkerURL   string
 	EmbedBatchSize   int
 	EmbedBatchWindow time.Duration
@@ -142,9 +145,11 @@ func Load(root string) (*Config, error) {
 		QdrantURL:    r.str("QDRANT_URL", "http://localhost:6333"),
 		QdrantAPIKey: r.str("QDRANT_API_KEY", ""),
 
-		ControlURL:   r.url("SAUCEDUST_CONTROL_URL", "http://localhost:8000"),
-		ControlToken: r.str("SAUCEDUST_CONTROL_TOKEN", ""),
-		ControlBind:  r.str("SAUCEDUST_CONTROL_BIND", "127.0.0.1:8000"),
+		ControlURL:    r.url("SAUCEDUST_CONTROL_URL", "http://localhost:8000"),
+		ControlToken:  r.str("SAUCEDUST_CONTROL_TOKEN", ""),
+		ControlBind:   r.str("SAUCEDUST_CONTROL_BIND", "127.0.0.1:8000"),
+		AdminUser:     strings.TrimSpace(r.str("SAUCEDUST_ADMIN_USER", "")),
+		AdminPassword: r.str("SAUCEDUST_ADMIN_PASSWORD", ""),
 
 		EmbedWorkerURL:   r.url("EMBED_WORKER_URL", "http://127.0.0.1:8100"),
 		EmbedBatchSize:   r.intVal("EMBED_BATCH_SIZE", 16),

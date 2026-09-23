@@ -4,7 +4,6 @@ package httpapi
 
 import (
 	"context"
-	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -46,11 +45,21 @@ type StatsSource interface {
 }
 
 type Config struct {
-	Bind        string
-	Token       string
-	NodeTimeout time.Duration
-	SourceSite  string
-	ScopeKey    string
+	Bind          string
+	Token         string
+	NodeTimeout   time.Duration
+	SourceSite    string
+	ScopeKey      string
+	AdminUser     string
+	AdminPassword string
+	AdminFile     string
+	NodeID        string
+	Role          string
+	IndexKind     string
+	DataDir       string
+	IndexDir      string
+	ThumbDir      string
+	RangeSize     int64
 }
 
 type Deps struct {
@@ -62,12 +71,17 @@ type Deps struct {
 	Index    app.VectorIndex
 	Embedder app.Embedder
 	Log      *slog.Logger
+	Telegram TelegramControl
+	Ops      Operator
 }
 
 type Server struct {
-	cfg  Config
-	deps Deps
-	http *http.Server
+	cfg      Config
+	deps     Deps
+	http     *http.Server
+	mu       sync.Mutex
+	sessions map[string]time.Time
+	fails    map[string]failState
 }
 
 // minTokenLen은 밖으로 열 때 요구하는 토큰 길이입니다.
@@ -102,6 +116,8 @@ func New(cfg Config, deps Deps) (*Server, error) {
 		WriteTimeout:      2 * time.Minute,
 		IdleTimeout:       2 * time.Minute,
 	}
+	s.sessions = map[string]time.Time{}
+	s.fails = map[string]failState{}
 	return s, nil
 }
 
@@ -149,6 +165,25 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /v1/stats", s.authed(s.handleStats))
 	mux.Handle("GET /v1/images/{id}", s.authed(s.handleImageByID))
 	mux.Handle("GET /v1/images/source/{site}/{postID}", s.authed(s.handleImageBySource))
+	mux.HandleFunc("POST /v1/login", s.handleLogin)
+	mux.HandleFunc("POST /v1/setup", s.handleSetup)
+	mux.HandleFunc("POST /v1/logout", s.handleLogout)
+	mux.HandleFunc("GET /v1/session", s.handleSession)
+	mux.Handle("POST /v1/password", s.authed(s.handlePassword))
+	mux.Handle("GET /v1/jobs", s.authed(s.handleJobs))
+	mux.Handle("POST /v1/jobs/reset", s.authed(s.handleJobReset))
+	mux.Handle("POST /v1/jobs/fill", s.authed(s.handleJobFill))
+	mux.Handle("POST /v1/nodes/reclaim", s.authed(s.handleReclaim))
+	mux.Handle("GET /v1/settings", s.authed(s.handleSettings))
+	mux.Handle("POST /v1/settings", s.authed(s.handleSaveSettings))
+	mux.Handle("POST /v1/settings/telegram", s.authed(s.handleTelegram))
+	mux.Handle("GET /v1/models", s.authed(s.handleModels))
+	mux.Handle("POST /v1/models", s.authed(s.handleAddModel))
+	mux.Handle("POST /v1/models/sync", s.authed(s.handleSyncModels))
+	mux.Handle("POST /v1/maintenance/rebuild", s.authed(s.handleRebuild))
+	mux.Handle("POST /v1/maintenance/reembed", s.authed(s.handleReembed))
+	mux.Handle("GET /v1/maintenance", s.authed(s.handleJob))
+	mux.Handle("GET /v1/verify", s.authed(s.handleVerify))
 
 	dashboard, err := newDashboardHandler()
 	if err != nil {
@@ -206,15 +241,11 @@ func bindIsLoopback(bind string) bool {
 // 밖으로 열 때 토큰이 있는지는 checkExposure가 시작 전에 확인합니다.
 func (s *Server) authed(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.Token != "" {
-			supplied := r.Header.Get("authorization")
-			expected := "Bearer " + s.cfg.Token
-			if subtle.ConstantTimeCompare([]byte(supplied), []byte(expected)) != 1 {
-				writeError(w, http.StatusUnauthorized, errors.New("인증 토큰이 필요합니다"))
-				return
-			}
+		if s.allowed(r) {
+			next(w, r)
+			return
 		}
-		next(w, r)
+		writeError(w, http.StatusUnauthorized, errors.New("인증 토큰이 필요합니다"))
 	})
 }
 
@@ -479,7 +510,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, StatsView{
+	view := StatsView{
 		Images:         images,
 		Vectors:        crawl.VectorsByModel,
 		OnlineNodes:    online,
@@ -491,7 +522,19 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		SavedPerSec:    fleet.TotalPerSecond,
 		HighWatermark:  crawl.HighWatermark,
 		BackfillBefore: crawl.BackfillBefore,
-	})
+		SourceSite:     s.cfg.SourceSite,
+		ScopeKey:       s.cfg.ScopeKey,
+	}
+	if admin, ok := s.deps.Stats.(ConsoleAdmin); ok {
+		if rs, err := admin.RangeStats(ctx, s.cfg.SourceSite, s.cfg.ScopeKey); err != nil {
+			s.deps.Log.Warn("구간 통계를 읽지 못했습니다", slog.String("error", err.Error()))
+		} else {
+			view.RangesTotal = rs.Total
+			view.RangesEmpty = rs.Empty
+			view.RangesExhausted = rs.Exhausted
+		}
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

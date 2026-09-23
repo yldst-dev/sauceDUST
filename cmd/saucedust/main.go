@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"saucedust/internal/adapter/embedworker"
+	"saucedust/internal/adapter/httpapi"
 	"saucedust/internal/adapter/postgres"
 	"saucedust/internal/adapter/telegram"
 	"saucedust/internal/app"
@@ -165,6 +166,8 @@ var (
 )
 
 var _ app.Embedder = (*embedworker.Client)(nil)
+
+var _ httpapi.ConsoleAdmin = (*postgres.Store)(nil)
 
 var (
 	_ app.BotGateway    = (*telegram.Client)(nil)

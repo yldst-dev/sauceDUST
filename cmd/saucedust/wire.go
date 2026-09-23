@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -62,6 +63,9 @@ func boot(ctx context.Context) (*nodeRuntime, error) {
 	}
 	cfg, err := config.Load(findRoot(root))
 	if err != nil {
+		return nil, err
+	}
+	if err := config.ApplyWebFile(cfg); err != nil {
 		return nil, err
 	}
 
@@ -240,8 +244,8 @@ func (r *nodeRuntime) newFleet() (*app.Fleet, error) {
 //
 // 봇은 우회 경로를 그대로 씁니다. 텔레그램도 막힐 수 있고, 막히면 같은 방법으로
 // 뚫어야 하기 때문입니다.
-func (r *nodeRuntime) newBot(search app.ImageSearcher) (*app.Bot, error) {
-	if r.cfg.TelegramToken == "" {
+func (r *nodeRuntime) newBotToken(search app.ImageSearcher, token string) (*app.Bot, error) {
+	if strings.TrimSpace(token) == "" {
 		return nil, nil
 	}
 
@@ -250,7 +254,7 @@ func (r *nodeRuntime) newBot(search app.ImageSearcher) (*app.Bot, error) {
 		return nil, err
 	}
 	gateway, err := telegram.New(chain, telegram.Options{
-		Token:       r.cfg.TelegramToken,
+		Token:       token,
 		PollTimeout: r.cfg.TelegramPollTimeout,
 	})
 	if err != nil {

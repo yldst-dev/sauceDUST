@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"log/slog"
+	"path/filepath"
 	"time"
 
 	"saucedust/internal/adapter/httpapi"
@@ -75,15 +76,41 @@ func cmdControl(ctx context.Context, args []string) error {
 		return err
 	}
 
+	adminUser, adminPass, adminFile, err := httpapi.EnsureAdmin(
+		rt.cfg.DataDir, rt.cfg.AdminUser, rt.cfg.AdminPassword, rt.log)
+	if err != nil {
+		return err
+	}
+	rt.log.Info("제어 화면", slog.String("url", "http://"+rt.cfg.ControlBind+"/"))
+
+	tgPath := filepath.Join(rt.cfg.DataDir, "telegram.json")
+	if saved, ok, err := loadTelegramFile(tgPath); err != nil {
+		return err
+	} else if ok {
+		rt.cfg.TelegramToken = saved
+	}
+	bots := newBotHost(rt, search, rt.cfg.TelegramToken, tgPath, rt.log)
+
 	server, err := httpapi.New(httpapi.Config{
-		Bind:        rt.cfg.ControlBind,
-		Token:       rt.cfg.ControlToken,
-		NodeTimeout: rt.cfg.NodeTimeout,
-		SourceSite:  rt.cfg.SourceSite,
-		ScopeKey:    rt.cfg.ScopeKey,
+		Bind:          rt.cfg.ControlBind,
+		Token:         rt.cfg.ControlToken,
+		NodeTimeout:   rt.cfg.NodeTimeout,
+		SourceSite:    rt.cfg.SourceSite,
+		ScopeKey:      rt.cfg.ScopeKey,
+		AdminUser:     adminUser,
+		AdminPassword: adminPass,
+		AdminFile:     adminFile,
+		NodeID:        rt.cfg.NodeID,
+		Role:          string(rt.cfg.Role),
+		IndexKind:     string(rt.cfg.IndexKind),
+		DataDir:       rt.cfg.DataDir,
+		IndexDir:      rt.cfg.IndexDir,
+		ThumbDir:      rt.cfg.ThumbDir,
+		RangeSize:     rt.cfg.BackfillRangeSize,
 	}, httpapi.Deps{
 		Ingest: ingest, Search: search, Stats: rt.store, Images: rt.store,
-		Index: index, Embedder: embedder, Log: rt.log,
+		Index: index, Embedder: embedder, Log: rt.log, Telegram: bots,
+		Ops: newWebOps(rt, ingest, embedder, bots, adminUser, adminFile),
 	})
 	if err != nil {
 		return err
@@ -91,8 +118,6 @@ func cmdControl(ctx context.Context, args []string) error {
 
 	reportCapacity(ctx, rt, models)
 
-	// 여기까지 왔는데 토큰이 비었다면 되돌아오는 주소입니다.
-	// 밖으로 열린 주소는 httpapi.New가 이미 막았습니다.
 	if rt.cfg.ControlToken == "" {
 		rt.log.Warn("토큰이 없어 이 컴퓨터 안에서만 씁니다",
 			slog.String("bind", rt.cfg.ControlBind),
@@ -102,13 +127,7 @@ func cmdControl(ctx context.Context, args []string) error {
 	tasks := []namedTask{
 		{"server", server.Run},
 		{"fleet", fleet.Run},
-	}
-
-	// 봇은 토큰이 있을 때만 띄웁니다. 검색기는 이미 만들어 둔 것을 그대로 씁니다.
-	if bot, err := rt.newBot(search); err != nil {
-		return err
-	} else if bot != nil {
-		tasks = append(tasks, namedTask{"bot", bot.Run})
+		{"bot", bots.Run},
 	}
 
 	if !*noCrawl {

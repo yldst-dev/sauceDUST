@@ -14,6 +14,12 @@
 *.test
 coverage.out
 
+# 제어 화면
+node_modules/
+web-admin.json
+telegram.json
+web-config.json
+
 # Python
 .venv/
 venv/

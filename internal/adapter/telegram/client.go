@@ -210,6 +210,22 @@ func (c *Client) DownloadFile(ctx context.Context, fileID string) ([]byte, error
 	return data, nil
 }
 
+func (c *Client) Identity(ctx context.Context) (string, error) {
+	var payload struct {
+		Result struct {
+			Username string `json:"username"`
+		} `json:"result"`
+	}
+	if err := c.call(ctx, "getMe", map[string]any{}, &payload); err != nil {
+		return "", err
+	}
+	name := strings.TrimSpace(payload.Result.Username)
+	if name == "" {
+		return "", errors.New("텔레그램이 봇 이름을 주지 않았습니다")
+	}
+	return name, nil
+}
+
 func (c *Client) SendMessage(ctx context.Context, msg domain.BotReply) error {
 	body := map[string]any{
 		"chat_id":                  msg.ChatID,

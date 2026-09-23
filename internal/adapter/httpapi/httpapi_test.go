@@ -421,7 +421,7 @@ func TestDashboardIsEmbedded(t *testing.T) {
 		t.Fatalf("대시보드 응답이 %d입니다", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"saucedust", "수집 구간", "/v1/stats", "/v1/nodes"} {
+	for _, want := range []string{"saucedust", "수집 구간", "/v1/stats", "/v1/nodes", "대시보드", "텔레그램", "/v1/login"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("대시보드에 %q가 없습니다", want)
 		}

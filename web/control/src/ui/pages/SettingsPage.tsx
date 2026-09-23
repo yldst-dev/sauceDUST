@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
-import { addModel, changePassword, clearTelegram, loadJob, loadSettings, saveSettings, saveTelegram, startRebuild, startReembed, syncModels, verify } from "../../application/console"
-import type { Settings, VerifyItem } from "../../domain/types"
+import { addModel, applyUpdate, changePassword, checkUpdate, clearTelegram, loadJob, loadSettings, saveSettings, saveTelegram, startRebuild, startReembed, syncModels, verify } from "../../application/console"
+import type { Settings, UpdateInfo, VerifyItem } from "../../domain/types"
 import { Button } from "../components/Button"
 import { Card } from "../components/Card"
 import { Check, Field, SelectInput, TextInput } from "../components/Field"
@@ -38,10 +38,13 @@ export function SettingsPage({ onFlash }: { onFlash: (message: string) => void }
   const [model, setModel] = useState({ id: "", kind: "copy", vector_size: "", input_size: "224", backend: "", collection: "" })
   const [password, setPassword] = useState({ current: "", next: "" })
   const [checks, setChecks] = useState<VerifyItem[]>([])
+  const [update, setUpdate] = useState<UpdateInfo | null>(null)
+  const [updating, setUpdating] = useState(false)
   const [liveJob, setLiveJob] = useState<{ running: string; last: string; error: string } | null>(null)
 
   useEffect(() => {
     loadSettings().then(setDraft).catch((err: Error) => onFlash(err.message))
+    checkUpdate().then(setUpdate).catch((err: Error) => onFlash(err.message))
   }, [onFlash])
 
   useEffect(() => {
@@ -220,6 +223,34 @@ export function SettingsPage({ onFlash }: { onFlash: (message: string) => void }
           <Field label="컬렉션"><TextInput value={model.collection} onChange={(e) => setModel({ ...model, collection: e.target.value })} /></Field>
           <Button tone="primary" type="submit">모델 등록</Button>
         </form>
+      </Card>
+      <Card title="업데이트">
+        <p className="sub">
+          {update
+            ? `현재 ${update.current || "알 수 없음"} · 최신 ${update.latest || "확인 전"}`
+            : "최신 릴리스를 확인합니다."}
+        </p>
+        {update?.notes ? <p className="sub">{update.notes}</p> : null}
+        {update?.error ? <p className="err">{update.error}</p> : null}
+        <div className="actions">
+          <Button type="button" onClick={() => checkUpdate().then(setUpdate).catch((err: Error) => onFlash(err.message))}>업데이트 확인</Button>
+          {update?.available ? (
+            <Button tone="primary" type="button" disabled={updating} onClick={() => {
+              setUpdating(true)
+              applyUpdate().then(() => {
+                onFlash("새 버전을 받았습니다. 서버가 다시 켜질 때까지 기다립니다.")
+                let n = 0
+                const timer = setInterval(() => {
+                  n += 1
+                  fetch("/health").then((res) => {
+                    if (res.ok && n > 1) { clearInterval(timer); location.reload() }
+                  }).catch(() => {})
+                  if (n > 40) { clearInterval(timer); setUpdating(false); onFlash("다시 시작이 늦습니다. 잠시 뒤 새로고침하십시오.") }
+                }, 500)
+              }).catch((err: Error) => { setUpdating(false); onFlash(err.message) })
+            }}>{updating ? "받는 중" : `${update.latest}로 업데이트`}</Button>
+          ) : null}
+        </div>
       </Card>
       <Card title="유지보수">
         {note ? <p className="sub">{note}</p> : null}

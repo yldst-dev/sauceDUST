@@ -1,5 +1,5 @@
-import type { ReactNode } from "react"
-import { logout } from "../../application/console"
+import { useEffect, useState, type ReactNode } from "react"
+import { checkUpdate, logout } from "../../application/console"
 import type { PageId, Stats } from "../../domain/types"
 import { Brand } from "../components/Brand"
 import { rate } from "../format"
@@ -21,6 +21,10 @@ export function Shell({ page, stats, clock, flash, onRefresh, onLogout, children
   onLogout: () => void
   children: ReactNode
 }) {
+  const [update, setUpdate] = useState("")
+  useEffect(() => {
+    checkUpdate().then((info) => { if (info.available) setUpdate(info.latest) }).catch(() => {})
+  }, [])
   return (
     <div className="app">
       <header className="top">
@@ -31,6 +35,7 @@ export function Shell({ page, stats, clock, flash, onRefresh, onLogout, children
           <span>처리 속도 <b>{stats ? `${rate(stats.saved_per_sec)}/s` : "—"}</b></span>
           <i className="sep hide-sm" />
           <span className="hide-sm">{clock}</span>
+          {update ? <a className="path" href="#settings">업데이트 {update}</a> : null}
           <button className="ico" type="button" aria-label="새로고침" onClick={onRefresh}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M13 8a5 5 0 1 1-1.2-3.2" /><path d="M13 2.5V5h-2.5" /></svg>
           </button>

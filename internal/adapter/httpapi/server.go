@@ -60,6 +60,7 @@ type Config struct {
 	IndexDir      string
 	ThumbDir      string
 	RangeSize     int64
+	Version       string
 }
 
 type Deps struct {
@@ -184,6 +185,8 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("POST /v1/maintenance/reembed", s.authed(s.handleReembed))
 	mux.Handle("GET /v1/maintenance", s.authed(s.handleJob))
 	mux.Handle("GET /v1/verify", s.authed(s.handleVerify))
+	mux.Handle("GET /v1/update", s.authed(s.handleUpdateCheck))
+	mux.Handle("POST /v1/update", s.authed(s.handleUpdateApply))
 
 	dashboard, err := newDashboardHandler()
 	if err != nil {

@@ -127,3 +127,11 @@ export type Settings = {
 export type VerifyItem = { name: string; ok: string; note: string }
 
 export type JobStatus = { running: string; last: string; error: string }
+
+export type UpdateInfo = {
+  current: string
+  latest: string
+  available: boolean
+  notes: string
+  error?: string
+}

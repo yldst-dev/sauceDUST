@@ -1,4 +1,4 @@
-import type { ImageView, JobStatus, Jobs, ModelRow, NodeRow, SearchHit, Settings, Stats, VerifyItem } from "../domain/types"
+import type { ImageView, JobStatus, Jobs, ModelRow, NodeRow, SearchHit, Settings, Stats, UpdateInfo, VerifyItem } from "../domain/types"
 import { request, unauthorized } from "../infrastructure/http"
 
 export function login(user: string, password: string) {
@@ -106,4 +106,12 @@ export function startReembed(dry: boolean) {
 
 export function verify() {
   return request<VerifyItem[]>("/v1/verify")
+}
+
+export function checkUpdate() {
+  return request<UpdateInfo>("/v1/update")
+}
+
+export function applyUpdate() {
+  return request<{ restarting: boolean; version: string }>("/v1/update", { method: "POST", json: {} })
 }

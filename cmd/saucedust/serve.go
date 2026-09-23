@@ -107,6 +107,7 @@ func cmdControl(ctx context.Context, args []string) error {
 		IndexDir:      rt.cfg.IndexDir,
 		ThumbDir:      rt.cfg.ThumbDir,
 		RangeSize:     rt.cfg.BackfillRangeSize,
+		Version:       buildVersion,
 	}, httpapi.Deps{
 		Ingest: ingest, Search: search, Stats: rt.store, Images: rt.store,
 		Index: index, Embedder: embedder, Log: rt.log, Telegram: bots,

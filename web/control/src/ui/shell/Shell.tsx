@@ -43,18 +43,18 @@ export function Shell({ page, stats, clock, flash, onRefresh, onLogout, children
       </header>
       <div className="shell">
         <nav>
-          {pages.map((item) => (
-            <a key={item.id} href={`#${item.id}`} aria-current={page === item.id ? "page" : undefined}>
-              {item.icon}{item.label}
-            </a>
-          ))}
+          <div className="nav-links">
+            {pages.map((item) => (
+              <a key={item.id} href={`#${item.id}`} aria-current={page === item.id ? "page" : undefined}>
+                {item.icon}{item.label}
+              </a>
+            ))}
+          </div>
+          <button className="ghost nav-logout" type="button" onClick={() => logout().then(onLogout).catch(onLogout)}>로그아웃</button>
         </nav>
         <main>
           {flash ? <p className="flash">{flash}</p> : null}
           {children}
-          <div className="actions">
-            <button className="ghost" type="button" onClick={() => logout().then(onLogout).catch(onLogout)}>로그아웃</button>
-          </div>
         </main>
       </div>
     </div>

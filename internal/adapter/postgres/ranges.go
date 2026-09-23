@@ -100,6 +100,34 @@ WHERE id = $1`, id)
 }
 
 // ResetRetryQueue는 죽은 재시도 항목을 다시 대기로 돌립니다.
+func (s *Store) RetryFailedRanges(ctx context.Context, site, scope string) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
+UPDATE crawl_ranges
+SET attempts = 0, ready_at = now(), last_error = NULL, node_id = NULL, leased_at = NULL
+WHERE source_site = $1 AND scope_key = $2 AND status = 'failed'`, site, scope)
+	if err != nil {
+		return 0, fmt.Errorf("실패 구간을 재시도하지 못했습니다: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (s *Store) RetryPendingQueue(ctx context.Context, site, scope string) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
+UPDATE crawl_post_retries
+SET status = 'pending',
+    attempts = CASE WHEN status = 'dead' OR attempts >= $3 THEN 0 ELSE attempts END,
+    ready_at = now(),
+    node_id = NULL,
+    leased_at = NULL,
+    last_error = NULL
+WHERE source_site = $1 AND scope_key = $2
+  AND status IN ('pending', 'dead')`, site, scope, maxAttempts)
+	if err != nil {
+		return 0, fmt.Errorf("재시도 대기를 돌리지 못했습니다: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (s *Store) ResetRetryQueue(ctx context.Context, site, scope string) (int64, error) {
 	tag, err := s.pool.Exec(ctx, `
 UPDATE crawl_post_retries

@@ -20,7 +20,7 @@ export function DataPage({ stats, onFlash }: { stats: Stats | null; onFlash: (me
   }, [onFlash])
 
   return (
-    <>
+    <div className="stage">
       <PageHeader title="데이터" lead="쌓인 벡터를 보고, 게시물을 찾거나 이미지로 검색합니다." />
       <div className="grid-2">
         <Card title="모델">
@@ -71,6 +71,6 @@ export function DataPage({ stats, onFlash }: { stats: Stats | null; onFlash: (me
           </div>
         ))}
       </Card>
-    </>
+    </div>
   )
 }

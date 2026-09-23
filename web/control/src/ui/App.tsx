@@ -59,7 +59,7 @@ export function App() {
   if (gate === "setup") return <SetupPage onSuccess={() => setGate("in")} />
   if (gate === "login") return <LoginPage onSuccess={() => setGate("in")} />
 
-  let body = <DashboardPage stats={stats} nodes={nodes} />
+  let body = <DashboardPage stats={stats} nodes={nodes} onFlash={setFlash} onChanged={() => setTick((n) => n + 1)} />
   if (page === "jobs") body = <JobsPage onFlash={setFlash} />
   if (page === "nodes") body = <NodesPage nodes={nodes} onFlash={setFlash} onChanged={() => setTick((n) => n + 1)} />
   if (page === "data") body = <DataPage stats={stats} onFlash={setFlash} />

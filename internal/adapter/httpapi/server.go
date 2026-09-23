@@ -174,6 +174,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /v1/jobs", s.authed(s.handleJobs))
 	mux.Handle("POST /v1/jobs/reset", s.authed(s.handleJobReset))
 	mux.Handle("POST /v1/jobs/fill", s.authed(s.handleJobFill))
+	mux.Handle("POST /v1/jobs/retry", s.authed(s.handleJobRetry))
 	mux.Handle("POST /v1/nodes/reclaim", s.authed(s.handleReclaim))
 	mux.Handle("GET /v1/settings", s.authed(s.handleSettings))
 	mux.Handle("POST /v1/settings", s.authed(s.handleSaveSettings))

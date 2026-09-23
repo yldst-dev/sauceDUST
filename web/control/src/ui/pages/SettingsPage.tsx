@@ -40,6 +40,7 @@ export function SettingsPage({ onFlash }: { onFlash: (message: string) => void }
   const [checks, setChecks] = useState<VerifyItem[]>([])
   const [update, setUpdate] = useState<UpdateInfo | null>(null)
   const [updating, setUpdating] = useState(false)
+  const [panel, setPanel] = useState<"crawl" | "link" | "ops" | "account">("crawl")
   const [liveJob, setLiveJob] = useState<{ running: string; last: string; error: string } | null>(null)
 
   useEffect(() => {
@@ -88,11 +89,24 @@ export function SettingsPage({ onFlash }: { onFlash: (message: string) => void }
 
   const note = jobText(draft, liveJob)
 
+  const panels = [
+    ["crawl", "수집"],
+    ["link", "연결"],
+    ["ops", "운영"],
+    ["account", "계정"],
+  ] as const
+
   return (
-    <>
-      <PageHeader title="설정" lead="저장하면 이 컴퓨터의 서버가 스스로 다시 시작됩니다. 리눅스에서 명령을 치지 않아도 됩니다." />
+    <div className="stage">
+      <PageHeader title="설정" lead="저장하면 서버가 다시 시작됩니다. 칸을 바꿔 나머지를 보십시오." />
+      <div className="seg">
+        {panels.map(([id, label]) => (
+          <Button key={id} type="button" aria-current={panel === id ? "true" : undefined} onClick={() => setPanel(id)}>{label}</Button>
+        ))}
+      </div>
       {note ? <p className="sub">{note}</p> : null}
-      <form onSubmit={(e) => {
+      <div className="pane">
+      <form hidden={panel !== "crawl" && panel !== "link"} onSubmit={(e) => {
         e.preventDefault()
         saveSettings(body()).then(() => {
           onFlash("저장했습니다. 서버가 다시 켜질 때까지 기다립니다.")
@@ -106,6 +120,7 @@ export function SettingsPage({ onFlash }: { onFlash: (message: string) => void }
           }, 500)
         }).catch((err: Error) => onFlash(err.message))
       }}>
+        <div hidden={panel !== "crawl"}>
         <Card>
           <fieldset>
             <legend>수집</legend>
@@ -128,7 +143,10 @@ export function SettingsPage({ onFlash }: { onFlash: (message: string) => void }
             <Field label="사이트 키"><TextInput type="password" autoComplete="off" placeholder="비우면 그대로 둡니다" value={apiKey} onChange={(e) => setApiKey(e.target.value)} /></Field>
             <Check label="사이트 키 지우기" checked={clearApiKey} onChange={setClearApiKey} />
           </fieldset>
+          <Button tone="primary" type="submit">저장하고 다시 시작</Button>
         </Card>
+        </div>
+        <div hidden={panel !== "link"}>
         <Card>
           <fieldset>
             <legend>축소본</legend>
@@ -185,7 +203,9 @@ export function SettingsPage({ onFlash }: { onFlash: (message: string) => void }
           </fieldset>
           <Button tone="primary" type="submit">저장하고 다시 시작</Button>
         </Card>
+        </div>
       </form>
+      <div hidden={panel !== "account"}>
       <Card title="텔레그램 봇">
         <p className="sub">{draft?.telegram_set ? `봇이 켜져 있습니다. 토큰 끝자리는 ${draft.telegram_hint || ""} 입니다. 새 값을 저장하면 바로 다시 붙습니다.` : "토큰이 없습니다. 넣으면 봇이 바로 붙습니다."}</p>
         <form onSubmit={(e) => {
@@ -199,6 +219,20 @@ export function SettingsPage({ onFlash }: { onFlash: (message: string) => void }
           </div>
         </form>
       </Card>
+      <Card title="로그인">
+        <p className="sub">제어 화면 비밀번호를 바꿉니다. 8자 이상입니다.</p>
+        <form onSubmit={(e) => {
+          e.preventDefault()
+          changePassword(password.current, password.next).then(() => { setPassword({ current: "", next: "" }); onFlash("비밀번호를 바꿨습니다") }).catch((err: Error) => onFlash(err.message))
+        }}>
+          <TextInput name="username" autoComplete="username" value="admin" readOnly hidden />
+          <Field label="현재 비밀번호"><TextInput type="password" autoComplete="current-password" required value={password.current} onChange={(e) => setPassword({ ...password, current: e.target.value })} /></Field>
+          <Field label="새 비밀번호"><TextInput type="password" autoComplete="new-password" minLength={8} required value={password.next} onChange={(e) => setPassword({ ...password, next: e.target.value })} /></Field>
+          <Button tone="primary" type="submit">비밀번호 바꾸기</Button>
+        </form>
+      </Card>
+      </div>
+      <div hidden={panel !== "ops"}>
       <Card title="모델">
         <div className="actions">
           <Button type="button" onClick={() => syncModels().then((b) => onFlash(`${num(b.count)}개 모델을 등록했습니다`)).catch((err: Error) => onFlash(err.message))}>워커 모델 그대로 등록</Button>
@@ -270,18 +304,8 @@ export function SettingsPage({ onFlash }: { onFlash: (message: string) => void }
           </table>
         ) : null}
       </Card>
-      <Card title="로그인">
-        <p className="sub">제어 화면 비밀번호를 바꿉니다. 8자 이상입니다.</p>
-        <form onSubmit={(e) => {
-          e.preventDefault()
-          changePassword(password.current, password.next).then(() => { setPassword({ current: "", next: "" }); onFlash("비밀번호를 바꿨습니다") }).catch((err: Error) => onFlash(err.message))
-        }}>
-          <TextInput name="username" autoComplete="username" value="admin" readOnly hidden />
-          <Field label="현재 비밀번호"><TextInput type="password" autoComplete="current-password" required value={password.current} onChange={(e) => setPassword({ ...password, current: e.target.value })} /></Field>
-          <Field label="새 비밀번호"><TextInput type="password" autoComplete="new-password" minLength={8} required value={password.next} onChange={(e) => setPassword({ ...password, next: e.target.value })} /></Field>
-          <Button tone="primary" type="submit">비밀번호 바꾸기</Button>
-        </form>
-      </Card>
-    </>
+      </div>
+      </div>
+    </div>
   )
 }

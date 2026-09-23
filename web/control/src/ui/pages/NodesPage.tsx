@@ -9,7 +9,7 @@ import { dash, num, rate } from "../format"
 
 export function NodesPage({ nodes, onFlash, onChanged }: { nodes: NodeRow[]; onFlash: (message: string) => void; onChanged: () => void }) {
   return (
-    <>
+    <div className="stage">
       <PageHeader title="노드" lead="살아 있는 노드와 최근 처리량입니다." />
       <div className="actions">
         <Button type="button" onClick={() => reclaimNodes().then((b) => { onFlash(`${num(b.count)}개 임대를 회수했습니다`); onChanged() }).catch((err: Error) => onFlash(err.message))}>끊긴 노드의 임대 회수</Button>
@@ -40,6 +40,6 @@ export function NodesPage({ nodes, onFlash, onChanged }: { nodes: NodeRow[]; onF
         </Table>
         {nodes.length === 0 ? <p className="empty">등록된 노드가 없습니다.</p> : null}
       </Card>
-    </>
+    </div>
   )
 }

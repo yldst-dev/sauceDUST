@@ -28,7 +28,7 @@ export function JobsPage({ onFlash }: { onFlash: (message: string) => void }) {
     : ""
 
   return (
-    <>
+    <div className="stage">
       <PageHeader title="작업" lead="수집 구간을 보고, 막힌 구간을 다시 돌립니다." />
       <Card>
         <div className="metrics">
@@ -71,6 +71,6 @@ export function JobsPage({ onFlash }: { onFlash: (message: string) => void }) {
         </Table>
         {(jobs?.gaps.length ?? 0) === 0 ? <p className="empty">빈 구간이 없습니다.</p> : null}
       </Card>
-    </>
+    </div>
   )
 }

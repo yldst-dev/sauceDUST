@@ -37,6 +37,10 @@ export function fillGaps() {
   return request<{ count: number }>("/v1/jobs/fill", { method: "POST", json: {} })
 }
 
+export function retryWork(kind: "ranges" | "queue") {
+  return request<{ count: number }>("/v1/jobs/retry", { method: "POST", json: { kind } })
+}
+
 export function reclaimNodes() {
   return request<{ count: number }>("/v1/nodes/reclaim", { method: "POST", json: {} })
 }

@@ -24,6 +24,8 @@ type ConsoleAdmin interface {
 	StaleRunningRanges(ctx context.Context, site, scope string, olderThan time.Duration) (int64, error)
 	ReclaimDeadNodeLeases(ctx context.Context, timeout time.Duration) (int64, error)
 	ActiveModels(ctx context.Context) ([]domain.EmbeddingModel, error)
+	RetryFailedRanges(ctx context.Context, site, scope string) (int64, error)
+	RetryPendingQueue(ctx context.Context, site, scope string) (int64, error)
 }
 
 var errNoConsole = errors.New("이 서버에서는 구간을 다루지 않습니다")
@@ -196,6 +198,36 @@ func (s *Server) handleJobReset(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]int64{"count": count, "retries": retries})
+}
+
+func (s *Server) handleJobRetry(w http.ResponseWriter, r *http.Request) {
+	admin, err := s.console()
+	if err != nil {
+		writeError(w, http.StatusNotImplemented, err)
+		return
+	}
+	var body struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, errors.New("요청을 해석하지 못했습니다"))
+		return
+	}
+	var count int64
+	switch body.Kind {
+	case "ranges":
+		count, err = admin.RetryFailedRanges(r.Context(), s.cfg.SourceSite, s.cfg.ScopeKey)
+	case "queue":
+		count, err = admin.RetryPendingQueue(r.Context(), s.cfg.SourceSite, s.cfg.ScopeKey)
+	default:
+		writeError(w, http.StatusBadRequest, errors.New("재시도 대상을 지정하십시오"))
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"count": count})
 }
 
 func (s *Server) handleJobFill(w http.ResponseWriter, r *http.Request) {

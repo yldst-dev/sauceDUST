@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react"
-import { checkUpdate, logout } from "../../application/console"
+import { applyUpdate, checkUpdate, logout } from "../../application/console"
 import type { PageId, Stats } from "../../domain/types"
 import { Brand } from "../components/Brand"
 import { rate } from "../format"
@@ -21,21 +21,46 @@ export function Shell({ page, stats, clock, flash, onRefresh, onLogout, children
   onLogout: () => void
   children: ReactNode
 }) {
-  const [update, setUpdate] = useState("")
+  const [version, setVersion] = useState("")
+  const [latest, setLatest] = useState("")
+  const [updating, setUpdating] = useState(false)
   useEffect(() => {
-    checkUpdate().then((info) => { if (info.available) setUpdate(info.latest) }).catch(() => {})
+    checkUpdate().then((info) => {
+      setVersion(info.current)
+      if (info.available) setLatest(info.latest)
+    }).catch(() => {})
   }, [])
+
+  function updateNow() {
+    setUpdating(true)
+    applyUpdate().then(() => {
+      let n = 0
+      const timer = setInterval(() => {
+        n += 1
+        fetch("/health").then((res) => {
+          if (res.ok && n > 1) { clearInterval(timer); location.reload() }
+        }).catch(() => {})
+        if (n > 40) { clearInterval(timer); setUpdating(false) }
+      }, 500)
+    }).catch(() => setUpdating(false))
+  }
+
   return (
     <div className="app">
       <header className="top">
         <Brand />
         <div className="top-meta">
-          <span><i className={stats && stats.online_nodes > 0 ? "dot on" : "dot"} /> 연결 노드 <b>{stats ? `${stats.online_nodes}/${stats.total_nodes}` : "—"}</b></span>
+          <span className="meta-nodes"><i className={stats && stats.online_nodes > 0 ? "dot on" : "dot"} /> 연결 노드 <b>{stats ? `${stats.online_nodes}/${stats.total_nodes}` : "—"}</b></span>
           <i className="sep" />
-          <span>처리 속도 <b>{stats ? `${rate(stats.saved_per_sec)}/s` : "—"}</b></span>
-          <i className="sep hide-sm" />
-          <span className="hide-sm">{clock}</span>
-          {update ? <a className="path" href="#settings">업데이트 {update}</a> : null}
+          <span className="meta-rate">처리 속도 <b>{stats ? `${rate(stats.saved_per_sec)}/s` : "—"}</b></span>
+          <i className="sep" />
+          <span className="meta-ver">
+            {latest
+              ? <button className="primary ver-btn" type="button" disabled={updating} onClick={updateNow}>{updating ? "받는 중" : "업데이트"}</button>
+              : <b>{version || "—"}</b>}
+          </span>
+          <i className="sep" />
+          <span className="clock">{clock}</span>
           <button className="ico" type="button" aria-label="새로고침" onClick={onRefresh}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M13 8a5 5 0 1 1-1.2-3.2" /><path d="M13 2.5V5h-2.5" /></svg>
           </button>

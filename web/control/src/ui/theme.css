@@ -53,21 +53,21 @@ nav { position: sticky; top: 0; background: var(--rail); border-right: 1px solid
 nav a { display: flex; align-items: center; gap: 12px; padding: 12px 16px; color: var(--muted); text-decoration: none; font-size: 14px; border-left: 3px solid transparent; }
 nav a svg { flex: none; }
 nav a[aria-current="page"] { color: var(--text); background: rgba(46, 230, 192, 0.08); border-left-color: var(--teal); }
-main { min-height: 0; padding: 16px 20px; overflow: hidden; display: flex; flex-direction: column; }
+main { min-height: 0; padding: 16px 20px 28px; overflow-x: hidden; overflow-y: auto; }
 h2 { margin: 0; font-size: 22px; letter-spacing: -0.03em; }
 .lead { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
 .page-head, .stage > .page-head { display: flex; justify-content: space-between; align-items: end; gap: 12px; margin-bottom: 10px; }
-.stage { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
-.board { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.stage { display: flex; flex-direction: column; gap: 12px; }
+.board { display: flex; flex-direction: column; gap: 12px; }
 .board-top { display: grid; grid-template-columns: 1fr 1.15fr; gap: 12px; }
 .board .card, .stage > .card, .pane .card { margin-bottom: 12px; }
-.stage > .card { margin: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.scroll-panel { min-height: 0; overflow: hidden; }
+.stage > .card { margin: 0; overflow: visible; }
+.scroll-panel { overflow: visible; }
 .metrics.compact .v, .board .tile dd { font-size: 22px; }
 .board .tile button { margin-top: 8px; padding: 6px 10px; }
 .seg { display: flex; gap: 6px; margin-bottom: 12px; flex: none; }
 .seg button[aria-current="true"] { background: rgba(46, 230, 192, 0.14); border-color: var(--teal); color: var(--text); }
-.pane { flex: 1; min-height: 0; overflow: hidden; }
+.pane { overflow: visible; }
 .pane .card { padding: 14px 16px; }
 .pane input, .pane select { padding: 8px 10px; }
 .pane form { gap: 10px; }
@@ -111,7 +111,7 @@ legend { font-size: 18px; font-weight: 650; margin-bottom: 12px; }
 .hit { padding: 10px 0; border-top: 1px solid var(--line); }
 .hit a { color: var(--teal); }
 @media (max-width: 960px) {
-  .shell { grid-template-columns: 1fr; }
+  .shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
   nav { flex-direction: row; border-right: 0; border-bottom: 1px solid var(--line); }
   .nav-links { flex-direction: row; flex-wrap: wrap; overflow: hidden; }
   .nav-logout { margin-top: 0; }

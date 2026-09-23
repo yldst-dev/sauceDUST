@@ -113,7 +113,7 @@ func (b *Bot) handle(ctx context.Context, msg domain.BotMessage) {
 			slog.Int64("sender", msg.SenderID), slog.String("name", msg.Sender))
 		b.reply(ctx, domain.BotReply{
 			ChatID: msg.ChatID,
-			Text:   "이 봇은 허가된 사용자만 쓸 수 있습니다.",
+			Text:   "This bot is only available to approved users.",
 		})
 		return
 	}
@@ -125,7 +125,7 @@ func (b *Bot) handle(ctx context.Context, msg domain.BotMessage) {
 	case !msg.HasImage():
 		b.reply(ctx, domain.BotReply{
 			ChatID: msg.ChatID,
-			Text:   "찾고 싶은 그림을 사진이나 이미지 파일로 보내 주십시오.",
+			Text:   "Send the picture you want to find as a photo or an image file.",
 		})
 		return
 	}
@@ -137,16 +137,18 @@ func (b *Bot) handle(ctx context.Context, msg domain.BotMessage) {
 		}
 		b.log.Warn("이미지를 받지 못했습니다", slog.String("error", err.Error()))
 		b.reply(ctx, domain.BotReply{
-			ChatID: msg.ChatID, Text: "이미지를 받지 못했습니다. 다시 보내 주십시오.",
+			ChatID: msg.ChatID, Text: "Could not download the image. Please send it again.",
 		})
 		return
 	}
 	if int64(len(image)) > b.cfg.MaxImageBytes {
 		b.reply(ctx, domain.BotReply{
-			ChatID: msg.ChatID, Text: "이미지가 너무 큽니다.",
+			ChatID: msg.ChatID, Text: "The image is too large.",
 		})
 		return
 	}
+
+	b.reply(ctx, domain.BotReply{ChatID: msg.ChatID, Text: "Searching..."})
 
 	result, err := b.search.ByImage(ctx, image)
 	if err != nil {
@@ -155,7 +157,7 @@ func (b *Bot) handle(ctx context.Context, msg domain.BotMessage) {
 		}
 		b.log.Warn("검색에 실패했습니다", slog.String("error", err.Error()))
 		b.reply(ctx, domain.BotReply{
-			ChatID: msg.ChatID, Text: "검색에 실패했습니다. 잠시 뒤 다시 시도해 주십시오.",
+			ChatID: msg.ChatID, Text: "Search failed. Please try again in a moment.",
 		})
 		return
 	}
@@ -179,10 +181,10 @@ func (b *Bot) reply(ctx context.Context, msg domain.BotReply) {
 	}
 }
 
-const helpText = `그림을 보내면 어디서 온 것인지 찾아 드립니다.
+const helpText = `Send a picture to find where it came from.
 
-사진으로 보내도 되고 이미지 파일로 보내도 됩니다.
-크기를 줄이거나 다시 압축한 그림도 찾을 수 있습니다.`
+A photo or an image file both work.
+Cropped or recompressed copies can still match.`
 
 // FormatSearchReply는 검색 결과를 사람이 읽을 답장으로 바꿉니다.
 //
@@ -192,7 +194,7 @@ func FormatSearchReply(chatID int64, result *SearchResult) domain.BotReply {
 	reply := domain.BotReply{ChatID: chatID, DisablePreview: false}
 
 	if result == nil || len(result.Hits) == 0 {
-		reply.Text = "일치하는 그림을 찾지 못했습니다.\n아직 수집되지 않은 그림일 수 있습니다."
+		reply.Text = "No matching picture was found.\nIt may not have been collected yet."
 		return reply
 	}
 
@@ -200,25 +202,25 @@ func FormatSearchReply(chatID int64, result *SearchResult) domain.BotReply {
 	var b strings.Builder
 
 	if top.Exact {
-		b.WriteString("원본을 찾았습니다.\n\n")
+		b.WriteString("Found the original.\n\n")
 	} else {
-		b.WriteString("비슷한 그림입니다. 원본이 아닐 수 있습니다.\n\n")
+		b.WriteString("Similar picture. It may not be the original.\n\n")
 	}
 
 	b.WriteString(fmt.Sprintf("%s\n", domain.PostLabel(top.Image)))
-	b.WriteString(fmt.Sprintf("일치도 %.1f%%", top.Score*100))
+	b.WriteString(fmt.Sprintf("Match %.1f%%", top.Score*100))
 	if top.HashDistance >= 0 {
-		b.WriteString(fmt.Sprintf(" · 해시 차이 %d비트", top.HashDistance))
+		b.WriteString(fmt.Sprintf(" · hash distance %d bits", top.HashDistance))
 	}
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("등급 %s\n", domain.RatingLabel(top.Image.Rating)))
+	b.WriteString(fmt.Sprintf("Rating %s\n", ratingText(top.Image.Rating)))
 
 	if tags := visibleTags(top.Image.Tags, 12); tags != "" {
 		b.WriteString("\n" + tags + "\n")
 	}
 
 	if others := runnersUp(result.Hits); others != "" {
-		b.WriteString("\n다음 후보\n" + others)
+		b.WriteString("\nOther candidates\n" + others)
 	}
 
 	reply.Text = b.String()
@@ -231,7 +233,7 @@ func visibleTags(tags []string, limit int) string {
 		return ""
 	}
 	if len(tags) > limit {
-		return strings.Join(tags[:limit], ", ") + fmt.Sprintf(" 외 %d개", len(tags)-limit)
+		return strings.Join(tags[:limit], ", ") + fmt.Sprintf(" and %d more", len(tags)-limit)
 	}
 	return strings.Join(tags, ", ")
 }
@@ -252,9 +254,9 @@ func runnersUp(hits []Hit) string {
 // 빈 URL을 넣으면 텔레그램이 메시지 전체를 거부합니다.
 func replyButtons(img domain.Image) []domain.BotButton {
 	candidates := []domain.BotButton{
-		{Label: "원본 게시물", URL: img.CanonicalURL},
-		{Label: "작가 출처", URL: img.SourceURL},
-		{Label: "미리보기", URL: img.PreviewURL},
+		{Label: "Original post", URL: img.CanonicalURL},
+		{Label: "Artist source", URL: img.SourceURL},
+		{Label: "Preview", URL: img.PreviewURL},
 	}
 
 	out := make([]domain.BotButton, 0, len(candidates))
@@ -264,4 +266,21 @@ func replyButtons(img domain.Image) []domain.BotButton {
 		}
 	}
 	return out
+}
+
+func ratingText(rating string) string {
+	switch strings.ToLower(strings.TrimSpace(rating)) {
+	case "g", "general":
+		return "General"
+	case "s", "sensitive":
+		return "Sensitive"
+	case "q", "questionable":
+		return "Questionable"
+	case "e", "explicit":
+		return "Explicit"
+	case "":
+		return "Unrated"
+	default:
+		return rating
+	}
 }

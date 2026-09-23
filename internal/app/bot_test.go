@@ -148,21 +148,30 @@ func TestBotAnswersImageWithSearchResult(t *testing.T) {
 	runBot(t, BotConfig{}, gw, search)
 
 	replies := gw.replies()
-	if len(replies) != 1 {
+	if len(replies) != 2 {
 		t.Fatalf("답장이 %d건입니다", len(replies))
 	}
-	if replies[0].ChatID != 100 {
-		t.Fatalf("대화방이 %d입니다", replies[0].ChatID)
+	if replies[0].Text != "Searching..." || replies[0].ChatID != 100 {
+		t.Fatalf("검색 중 알림이 %+v입니다", replies[0])
 	}
-	if !strings.Contains(replies[0].Text, "원본을 찾았습니다") {
-		t.Fatalf("답장 내용이 %q입니다", replies[0].Text)
+	assertEnglish(t, replies[0].Text)
+	if replies[1].ChatID != 100 {
+		t.Fatalf("대화방이 %d입니다", replies[1].ChatID)
 	}
-	if !strings.Contains(replies[0].Text, "12345") {
+	if !strings.Contains(replies[1].Text, "Found the original") {
+		t.Fatalf("답장 내용이 %q입니다", replies[1].Text)
+	}
+	if !strings.Contains(replies[1].Text, "Rating General") {
+		t.Fatalf("등급 표시가 %q입니다", replies[1].Text)
+	}
+	if !strings.Contains(replies[1].Text, "12345") {
 		t.Fatal("게시물 번호가 빠졌습니다")
 	}
-	if len(replies[0].Buttons) == 0 {
-		t.Fatal("원본 링크 단추가 없습니다")
+	if len(replies[1].Buttons) != 1 || replies[1].Buttons[0].Label != "Original post" {
+		t.Fatalf("단추가 %+v입니다", replies[1].Buttons)
 	}
+	assertEnglish(t, replies[1].Text)
+	assertEnglish(t, replies[1].Buttons[0].Label)
 }
 
 // 결과가 없어도 사용자에게 알려야 합니다. 조용히 있으면 안 됩니다.
@@ -173,10 +182,11 @@ func TestBotAnswersWhenNothingFound(t *testing.T) {
 	runBot(t, BotConfig{}, gw, search)
 
 	replies := gw.replies()
-	if len(replies) != 1 || !strings.Contains(replies[0].Text, "찾지 못했습니다") {
+	if len(replies) != 2 || replies[0].Text != "Searching..." || !strings.Contains(replies[1].Text, "No matching picture") {
 		t.Fatalf("답장이 %+v입니다", replies)
 	}
-	if len(replies[0].Buttons) != 0 {
+	assertEnglish(t, replies[1].Text)
+	if len(replies[1].Buttons) != 0 {
 		t.Fatal("결과가 없는데 단추가 붙었습니다")
 	}
 }
@@ -194,9 +204,10 @@ func TestBotAnswersHelp(t *testing.T) {
 		t.Fatal("명령어에 검색을 돌리면 안 됩니다")
 	}
 	replies := gw.replies()
-	if len(replies) != 1 || !strings.Contains(replies[0].Text, "그림을 보내면") {
+	if len(replies) != 1 || !strings.Contains(replies[0].Text, "Send a picture") {
 		t.Fatalf("답장이 %+v입니다", replies)
 	}
+	assertEnglish(t, replies[0].Text)
 }
 
 func TestBotAsksForImageWhenTextOnly(t *testing.T) {
@@ -209,9 +220,10 @@ func TestBotAsksForImageWhenTextOnly(t *testing.T) {
 	runBot(t, BotConfig{}, gw, search)
 
 	replies := gw.replies()
-	if len(replies) != 1 || !strings.Contains(replies[0].Text, "보내 주십시오") {
+	if len(replies) != 1 || !strings.Contains(replies[0].Text, "Send the picture") {
 		t.Fatalf("답장이 %+v입니다", replies)
 	}
+	assertEnglish(t, replies[0].Text)
 }
 
 // 허용 목록이 있으면 그 사람만 쓸 수 있어야 합니다.
@@ -226,9 +238,10 @@ func TestBotRejectsUnknownSender(t *testing.T) {
 		t.Fatal("허용되지 않은 사용자에게 검색을 돌렸습니다")
 	}
 	replies := gw.replies()
-	if len(replies) != 1 || !strings.Contains(replies[0].Text, "허가된 사용자") {
+	if len(replies) != 1 || !strings.Contains(replies[0].Text, "approved users") {
 		t.Fatalf("답장이 %+v입니다", replies)
 	}
+	assertEnglish(t, replies[0].Text)
 }
 
 func TestBotAllowsListedSender(t *testing.T) {
@@ -250,9 +263,10 @@ func TestBotAnswersOnSearchFailure(t *testing.T) {
 	runBot(t, BotConfig{}, gw, search)
 
 	replies := gw.replies()
-	if len(replies) != 1 || !strings.Contains(replies[0].Text, "검색에 실패") {
+	if len(replies) != 2 || replies[0].Text != "Searching..." || !strings.Contains(replies[1].Text, "Search failed") {
 		t.Fatalf("답장이 %+v입니다", replies)
 	}
+	assertEnglish(t, replies[1].Text)
 }
 
 func TestBotAnswersOnDownloadFailure(t *testing.T) {
@@ -266,9 +280,10 @@ func TestBotAnswersOnDownloadFailure(t *testing.T) {
 		t.Fatal("이미지를 못 받았는데 검색을 돌렸습니다")
 	}
 	replies := gw.replies()
-	if len(replies) != 1 || !strings.Contains(replies[0].Text, "받지 못했습니다") {
+	if len(replies) != 1 || !strings.Contains(replies[0].Text, "Could not download") {
 		t.Fatalf("답장이 %+v입니다", replies)
 	}
+	assertEnglish(t, replies[0].Text)
 }
 
 // 처리에 실패해도 offset은 올려야 합니다.
@@ -325,7 +340,7 @@ func TestFormatShowsRunnersUp(t *testing.T) {
 		},
 	})
 
-	if !strings.Contains(reply.Text, "다음 후보") {
+	if !strings.Contains(reply.Text, "Other candidates") {
 		t.Fatal("다음 후보 목록이 없습니다")
 	}
 	for _, want := range []string{"100", "200", "300"} {
@@ -337,9 +352,10 @@ func TestFormatShowsRunnersUp(t *testing.T) {
 
 func TestFormatMarksUncertainMatch(t *testing.T) {
 	reply := FormatSearchReply(1, &SearchResult{Hits: []Hit{hit(100, 0.6, 30, false)}})
-	if !strings.Contains(reply.Text, "원본이 아닐 수 있습니다") {
+	if !strings.Contains(reply.Text, "may not be the original") {
 		t.Fatalf("확신 없는 결과를 그렇게 표시해야 합니다: %q", reply.Text)
 	}
+	assertEnglish(t, reply.Text)
 }
 
 // 빈 URL을 단추로 넣으면 텔레그램이 메시지 전체를 거부합니다.
@@ -353,13 +369,80 @@ func TestFormatSkipsEmptyURLs(t *testing.T) {
 		Score: 0.9, HashDistance: 0, Exact: true,
 	}}})
 
-	if len(reply.Buttons) != 1 {
+	if len(reply.Buttons) != 1 || reply.Buttons[0].Label != "Original post" {
 		t.Fatalf("단추가 %d개입니다. 올바른 URL 1개만 남아야 합니다: %+v",
 			len(reply.Buttons), reply.Buttons)
 	}
 	for _, b := range reply.Buttons {
 		if !strings.HasPrefix(b.URL, "https://") {
 			t.Fatalf("잘못된 URL이 단추가 됐습니다: %q", b.URL)
+		}
+	}
+}
+
+func TestFormatReplyIsEnglish(t *testing.T) {
+	top := hit(100, 0.91, 4, true)
+	top.Image.Rating = "e"
+	top.Image.SourceURL = "https://artist.example/post"
+	top.Image.PreviewURL = "https://cdn.example/preview.jpg"
+	top.Image.Tags = make([]string, 13)
+	for i := range top.Image.Tags {
+		top.Image.Tags[i] = "tag"
+	}
+
+	reply := FormatSearchReply(1, &SearchResult{Hits: []Hit{top, hit(200, 0.5, 8, false)}})
+	assertEnglish(t, reply.Text)
+	for _, want := range []string{"Rating Explicit", "and 1 more", "hash distance 4 bits", "Other candidates"} {
+		if !strings.Contains(reply.Text, want) {
+			t.Fatalf("%q가 없습니다: %s", want, reply.Text)
+		}
+	}
+
+	labels := []string{"Original post", "Artist source", "Preview"}
+	if len(reply.Buttons) != len(labels) {
+		t.Fatalf("단추가 %+v입니다", reply.Buttons)
+	}
+	for i, label := range labels {
+		if reply.Buttons[i].Label != label {
+			t.Fatalf("단추 %d가 %q입니다", i, reply.Buttons[i].Label)
+		}
+		assertEnglish(t, reply.Buttons[i].Label)
+	}
+}
+
+func TestBotRejectsOversizedImage(t *testing.T) {
+	gw := newGateway(imageMessage(100, 7))
+	search := &fakeSearcher{}
+
+	runBot(t, BotConfig{MaxImageBytes: 1}, gw, search)
+
+	if search.calls != 0 {
+		t.Fatal("큰 이미지에 검색을 돌렸습니다")
+	}
+	replies := gw.replies()
+	if len(replies) != 1 || replies[0].Text != "The image is too large." {
+		t.Fatalf("답장이 %+v입니다", replies)
+	}
+	assertEnglish(t, replies[0].Text)
+}
+
+func TestRatingText(t *testing.T) {
+	cases := map[string]string{
+		"g": "General", "s": "Sensitive", "q": "Questionable", "e": "Explicit",
+		"general": "General", " S ": "Sensitive", "": "Unrated", "custom": "custom",
+	}
+	for in, want := range cases {
+		if got := ratingText(in); got != want {
+			t.Errorf("%q에서 %q를 얻었습니다. %q를 기대했습니다", in, got, want)
+		}
+	}
+}
+
+func assertEnglish(t *testing.T, text string) {
+	t.Helper()
+	for _, r := range text {
+		if r >= 0xAC00 && r <= 0xD7A3 {
+			t.Fatalf("한글이 남았습니다: %q", text)
 		}
 	}
 }

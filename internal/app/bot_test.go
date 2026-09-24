@@ -16,6 +16,8 @@ type fakeGateway struct {
 
 	queued   [][]domain.BotUpdate
 	sent     []domain.BotReply
+	edited   []domain.BotReply
+	next     int64
 	files    map[string][]byte
 	fileErr  error
 	pollErr  error
@@ -63,10 +65,19 @@ func (f *fakeGateway) DownloadFile(_ context.Context, fileID string) ([]byte, er
 	return data, nil
 }
 
-func (f *fakeGateway) SendMessage(_ context.Context, msg domain.BotReply) error {
+func (f *fakeGateway) SendMessage(_ context.Context, msg domain.BotReply) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.next++
+	msg.MessageID = f.next
 	f.sent = append(f.sent, msg)
+	return msg.MessageID, nil
+}
+
+func (f *fakeGateway) EditMessage(_ context.Context, msg domain.BotReply) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.edited = append(f.edited, msg)
 	return nil
 }
 
@@ -74,6 +85,12 @@ func (f *fakeGateway) replies() []domain.BotReply {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]domain.BotReply(nil), f.sent...)
+}
+
+func (f *fakeGateway) edits() []domain.BotReply {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]domain.BotReply(nil), f.edited...)
 }
 
 type fakeSearcher struct {
@@ -148,30 +165,27 @@ func TestBotAnswersImageWithSearchResult(t *testing.T) {
 	runBot(t, BotConfig{}, gw, search)
 
 	replies := gw.replies()
-	if len(replies) != 2 {
-		t.Fatalf("답장이 %d건입니다", len(replies))
+	edits := gw.edits()
+	if len(replies) != 1 || replies[0].Text != "Searching..." || replies[0].ChatID != 100 {
+		t.Fatalf("검색 중 알림이 %+v입니다", replies)
 	}
-	if replies[0].Text != "Searching..." || replies[0].ChatID != 100 {
-		t.Fatalf("검색 중 알림이 %+v입니다", replies[0])
+	if len(edits) != 1 || edits[0].MessageID != replies[0].MessageID || edits[0].ChatID != 100 {
+		t.Fatalf("고친 메시지가 %+v입니다", edits)
 	}
-	assertEnglish(t, replies[0].Text)
-	if replies[1].ChatID != 100 {
-		t.Fatalf("대화방이 %d입니다", replies[1].ChatID)
+	if !strings.Contains(edits[0].Text, "Found the original") {
+		t.Fatalf("답장 내용이 %q입니다", edits[0].Text)
 	}
-	if !strings.Contains(replies[1].Text, "Found the original") {
-		t.Fatalf("답장 내용이 %q입니다", replies[1].Text)
+	if !strings.Contains(edits[0].Text, "Rating General") {
+		t.Fatalf("등급 표시가 %q입니다", edits[0].Text)
 	}
-	if !strings.Contains(replies[1].Text, "Rating General") {
-		t.Fatalf("등급 표시가 %q입니다", replies[1].Text)
-	}
-	if !strings.Contains(replies[1].Text, "12345") {
+	if !strings.Contains(edits[0].Text, "12345") {
 		t.Fatal("게시물 번호가 빠졌습니다")
 	}
-	if len(replies[1].Buttons) != 1 || replies[1].Buttons[0].Label != "Original post" {
-		t.Fatalf("단추가 %+v입니다", replies[1].Buttons)
+	if len(edits[0].Buttons) != 1 || edits[0].Buttons[0].Label != "Original post" {
+		t.Fatalf("단추가 %+v입니다", edits[0].Buttons)
 	}
-	assertEnglish(t, replies[1].Text)
-	assertEnglish(t, replies[1].Buttons[0].Label)
+	assertEnglish(t, edits[0].Text)
+	assertEnglish(t, edits[0].Buttons[0].Label)
 }
 
 // 결과가 없어도 사용자에게 알려야 합니다. 조용히 있으면 안 됩니다.
@@ -182,11 +196,12 @@ func TestBotAnswersWhenNothingFound(t *testing.T) {
 	runBot(t, BotConfig{}, gw, search)
 
 	replies := gw.replies()
-	if len(replies) != 2 || replies[0].Text != "Searching..." || !strings.Contains(replies[1].Text, "No matching picture") {
-		t.Fatalf("답장이 %+v입니다", replies)
+	edits := gw.edits()
+	if len(replies) != 1 || replies[0].Text != "Searching..." || len(edits) != 1 || !strings.Contains(edits[0].Text, "No matching picture") {
+		t.Fatalf("답장이 %+v %+v입니다", replies, edits)
 	}
-	assertEnglish(t, replies[1].Text)
-	if len(replies[1].Buttons) != 0 {
+	assertEnglish(t, edits[0].Text)
+	if len(edits[0].Buttons) != 0 {
 		t.Fatal("결과가 없는데 단추가 붙었습니다")
 	}
 }
@@ -263,10 +278,11 @@ func TestBotAnswersOnSearchFailure(t *testing.T) {
 	runBot(t, BotConfig{}, gw, search)
 
 	replies := gw.replies()
-	if len(replies) != 2 || replies[0].Text != "Searching..." || !strings.Contains(replies[1].Text, "Search failed") {
-		t.Fatalf("답장이 %+v입니다", replies)
+	edits := gw.edits()
+	if len(replies) != 1 || replies[0].Text != "Searching..." || len(edits) != 1 || !strings.Contains(edits[0].Text, "Search failed") {
+		t.Fatalf("답장이 %+v %+v입니다", replies, edits)
 	}
-	assertEnglish(t, replies[1].Text)
+	assertEnglish(t, edits[0].Text)
 }
 
 func TestBotAnswersOnDownloadFailure(t *testing.T) {

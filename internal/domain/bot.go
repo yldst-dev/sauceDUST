@@ -37,6 +37,7 @@ type BotButton struct {
 
 type BotReply struct {
 	ChatID         int64
+	MessageID      int64
 	Text           string
 	Buttons        []BotButton
 	DisablePreview bool

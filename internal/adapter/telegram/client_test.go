@@ -201,7 +201,7 @@ func TestDownloadFile(t *testing.T) {
 
 func TestSendMessageWithButtons(t *testing.T) {
 	api := newAPI()
-	err := newClient(t, api).SendMessage(context.Background(), domain.BotReply{
+	_, err := newClient(t, api).SendMessage(context.Background(), domain.BotReply{
 		ChatID: 555, Text: "찾았습니다",
 		Buttons: []domain.BotButton{
 			{Label: "원본", URL: "https://danbooru.example/posts/1"},
@@ -230,7 +230,7 @@ func TestSendMessageWithButtons(t *testing.T) {
 
 func TestSendMessageWithoutButtons(t *testing.T) {
 	api := newAPI()
-	err := newClient(t, api).SendMessage(context.Background(), domain.BotReply{
+	_, err := newClient(t, api).SendMessage(context.Background(), domain.BotReply{
 		ChatID: 1, Text: "안내",
 	})
 	if err != nil {
@@ -246,7 +246,7 @@ func TestUnauthorizedIsNotRetryable(t *testing.T) {
 	api := newAPI()
 	api.status = http.StatusUnauthorized
 
-	err := newClient(t, api).SendMessage(context.Background(), domain.BotReply{ChatID: 1, Text: "x"})
+	_, err := newClient(t, api).SendMessage(context.Background(), domain.BotReply{ChatID: 1, Text: "x"})
 	if err == nil {
 		t.Fatal("401은 오류여야 합니다")
 	}
@@ -267,7 +267,7 @@ func TestServerErrorIsRetryable(t *testing.T) {
 	api := newAPI()
 	api.status = http.StatusBadGateway
 
-	err := newClient(t, api).SendMessage(context.Background(), domain.BotReply{ChatID: 1, Text: "x"})
+	_, err := newClient(t, api).SendMessage(context.Background(), domain.BotReply{ChatID: 1, Text: "x"})
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || !apiErr.Retryable() {
 		t.Fatalf("502는 재시도 대상이어야 합니다: %v", err)

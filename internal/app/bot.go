@@ -16,7 +16,8 @@ import (
 type BotGateway interface {
 	GetUpdates(ctx context.Context, offset int64) ([]domain.BotUpdate, error)
 	DownloadFile(ctx context.Context, fileID string) ([]byte, error)
-	SendMessage(ctx context.Context, msg domain.BotReply) error
+	SendMessage(ctx context.Context, msg domain.BotReply) (int64, error)
+	EditMessage(ctx context.Context, msg domain.BotReply) error
 }
 
 // ImageSearcher는 이미지로 원본을 찾습니다.
@@ -148,7 +149,7 @@ func (b *Bot) handle(ctx context.Context, msg domain.BotMessage) {
 		return
 	}
 
-	b.reply(ctx, domain.BotReply{ChatID: msg.ChatID, Text: "Searching..."})
+	searchingID := b.reply(ctx, domain.BotReply{ChatID: msg.ChatID, Text: "Searching..."})
 
 	result, err := b.search.ByImage(ctx, image)
 	if err != nil {
@@ -156,13 +157,13 @@ func (b *Bot) handle(ctx context.Context, msg domain.BotMessage) {
 			return
 		}
 		b.log.Warn("검색에 실패했습니다", slog.String("error", err.Error()))
-		b.reply(ctx, domain.BotReply{
+		b.replace(ctx, searchingID, domain.BotReply{
 			ChatID: msg.ChatID, Text: "Search failed. Please try again in a moment.",
 		})
 		return
 	}
 
-	b.reply(ctx, FormatSearchReply(msg.ChatID, result))
+	b.replace(ctx, searchingID, FormatSearchReply(msg.ChatID, result))
 }
 
 func (b *Bot) permitted(msg domain.BotMessage) bool {
@@ -172,12 +173,27 @@ func (b *Bot) permitted(msg domain.BotMessage) bool {
 	return b.allowed[msg.SenderID]
 }
 
-func (b *Bot) reply(ctx context.Context, msg domain.BotReply) {
+func (b *Bot) reply(ctx context.Context, msg domain.BotReply) int64 {
 	if ctx.Err() != nil {
+		return 0
+	}
+	id, err := b.gateway.SendMessage(ctx, msg.Trimmed())
+	if err != nil {
+		b.log.Warn("답장을 보내지 못했습니다", slog.String("error", err.Error()))
+		return 0
+	}
+	return id
+}
+
+func (b *Bot) replace(ctx context.Context, messageID int64, msg domain.BotReply) {
+	if messageID == 0 {
+		b.reply(ctx, msg)
 		return
 	}
-	if err := b.gateway.SendMessage(ctx, msg.Trimmed()); err != nil {
-		b.log.Warn("답장을 보내지 못했습니다", slog.String("error", err.Error()))
+	msg.MessageID = messageID
+	if err := b.gateway.EditMessage(ctx, msg.Trimmed()); err != nil {
+		b.log.Warn("답장을 고치지 못했습니다", slog.String("error", err.Error()))
+		b.reply(ctx, msg)
 	}
 }
 

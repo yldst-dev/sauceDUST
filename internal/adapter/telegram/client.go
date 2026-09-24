@@ -226,7 +226,28 @@ func (c *Client) Identity(ctx context.Context) (string, error) {
 	return name, nil
 }
 
-func (c *Client) SendMessage(ctx context.Context, msg domain.BotReply) error {
+func (c *Client) SendMessage(ctx context.Context, msg domain.BotReply) (int64, error) {
+	var payload struct {
+		Result struct {
+			MessageID int64 `json:"message_id"`
+		} `json:"result"`
+	}
+	if err := c.call(ctx, "sendMessage", messageBody(msg), &payload); err != nil {
+		return 0, err
+	}
+	return payload.Result.MessageID, nil
+}
+
+func (c *Client) EditMessage(ctx context.Context, msg domain.BotReply) error {
+	body := messageBody(msg)
+	body["message_id"] = msg.MessageID
+	if len(msg.Buttons) == 0 {
+		body["reply_markup"] = map[string]any{"inline_keyboard": []any{}}
+	}
+	return c.call(ctx, "editMessageText", body, nil)
+}
+
+func messageBody(msg domain.BotReply) map[string]any {
 	body := map[string]any{
 		"chat_id":                  msg.ChatID,
 		"text":                     msg.Text,
@@ -241,7 +262,7 @@ func (c *Client) SendMessage(ctx context.Context, msg domain.BotReply) error {
 			"inline_keyboard": [][]map[string]string{row},
 		}
 	}
-	return c.call(ctx, "sendMessage", body, nil)
+	return body
 }
 
 // maskToken은 문자열에서 봇 토큰을 지웁니다.

@@ -42,7 +42,8 @@ func TestTokenNeverLeavesInErrors(t *testing.T) {
 	}{
 		{"GetUpdates", func() error { _, err := client.GetUpdates(ctx, 0); return err }},
 		{"SendMessage", func() error {
-			return client.SendMessage(ctx, domain.BotReply{ChatID: 1, Text: "안녕"})
+			_, err := client.SendMessage(ctx, domain.BotReply{ChatID: 1, Text: "안녕"})
+			return err
 		}},
 	}
 
